@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TRAC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+    :root {
+        --bg: #08090b;
+        --panel: #111316;
+        --panel-hover: #15181c;
+        --border: #1c1f24;
+        --border-soft: #16181c;
+        --text: #e8e9eb;
+        --text-dim: #9a9ea5;
+        --text-faint: #5c6067;
+        --amber: #ffb020;
+        --amber-dim: #7a5a18;
+        --green: #3dd68c;
+        --red: #ff5d5d;
+        --blue: #5b9dff;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'Inter', -apple-system, sans-serif;
+        display: flex;
+        min-height: 100vh;
+        font-size: 14px;
+    }
+
+    ::selection { background: var(--amber-dim); color: var(--text); }
+
+    .sidebar {
+        width: 210px;
+        flex-shrink: 0;
+        border-right: 1px solid var(--border);
+        padding: 24px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+    }
+
+    .brand { display: flex; align-items: center; gap: 9px; }
+    .brand-mark {
+        width: 22px; height: 22px;
+        border: 1.5px solid var(--amber);
+        border-radius: 4px;
+        display: flex; align-items: center; justify-content: center;
+        color: var(--amber);
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 11px;
+        font-weight: 700;
+    }
+    .brand-name {
+        font-family: 'IBM Plex Mono', monospace;
+        font-weight: 700;
+        font-size: 15px;
+        letter-spacing: 0.14em;
+    }
+
+    .nav { display: flex; flex-direction: column; gap: 2px; }
+    .nav-item {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 12px;
+        color: var(--text-faint);
+        padding: 8px 10px;
+        border-radius: 6px;
+        letter-spacing: 0.03em;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        cursor: default;
+    }
+    .nav-item.active { color: var(--text); background: var(--panel); }
+    .nav-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: 0.5; }
+    .nav-item.active .nav-dot { background: var(--amber); opacity: 1; }
+
+    .sidebar-foot {
+        margin-top: auto;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 10.5px;
+        color: var(--text-faint);
+        line-height: 1.6;
+    }
+    .live-indicator { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+    .live-dot {
+        width: 6px; height: 6px; border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 0 0 rgba(61,214,140,0.5);
+        animation: pulse-dot 2s infinite;
+    }
+    @keyframes pulse-dot {
+        0% { box-shadow: 0 0 0 0 rgba(61,214,140,0.45); }
+        70% { box-shadow: 0 0 0 6px rgba(61,214,140,0); }
+        100% { box-shadow: 0 0 0 0 rgba(61,214,140,0); }
+    }
+
+    .main { flex: 1; padding: 32px 40px 40px; max-width: 1080px; }
+    .page-header { margin-bottom: 28px; }
+    .page-title {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        color: var(--text-faint);
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        margin-bottom: 6px;
+    }
+    .page-sub { color: var(--text-dim); font-size: 14px; }
+
+    .pulse-panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 18px 20px 14px;
+        margin-bottom: 20px;
+    }
+    .pulse-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
+    .pulse-label {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 10.5px;
+        color: var(--text-faint);
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+    }
+    .pulse-count { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--amber); }
+    .pulse-bars { display: flex; align-items: flex-end; gap: 3px; height: 44px; }
+    .pulse-bar {
+        flex: 1;
+        background: linear-gradient(180deg, var(--amber) 0%, var(--amber-dim) 100%);
+        border-radius: 2px 2px 0 0;
+        min-height: 3px;
+        opacity: 0.85;
+        transform-origin: bottom;
+        animation: rise 0.5s ease-out backwards;
+    }
+    .pulse-bar.zero { background: var(--border-soft); opacity: 1; }
+    @keyframes rise { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+
+    .stats-row { display: flex; gap: 12px; margin-bottom: 24px; }
+    .stat-chip {
+        flex: 1;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 14px 18px;
+    }
+    .stat-value { font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 600; }
+    .stat-label { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
+
+    .filters { display: flex; gap: 8px; margin-bottom: 22px; flex-wrap: wrap; }
+    .filter-btn {
+        font-family: 'IBM Plex Mono', monospace;
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text-dim);
+        padding: 6px 13px;
+        border-radius: 20px;
+        cursor: pointer;
+        font-size: 11.5px;
+        letter-spacing: 0.02em;
+        transition: all 0.15s ease;
+    }
+    .filter-btn:hover { border-color: var(--text-faint); color: var(--text); }
+    .filter-btn.active { background: var(--amber); border-color: var(--amber); color: #1a1300; font-weight: 600; }
+
+    .day-group { margin-bottom: 22px; }
+    .day-header {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 10.5px;
+        color: var(--text-faint);
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+        padding-left: 2px;
+    }
+    .event-card {
+        background: var(--panel);
+        border: 1px solid var(--border-soft);
+        border-radius: 8px;
+        padding: 13px 16px;
+        margin-bottom: 6px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        transition: background 0.12s ease, border-color 0.12s ease;
+    }
+    .event-card:hover { background: var(--panel-hover); border-color: var(--border); }
+    .event-glyph {
+        width: 26px; height: 26px;
+        border-radius: 6px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 13px;
+        flex-shrink: 0;
+        font-family: 'IBM Plex Mono', monospace;
+    }
+    .glyph-agent { background: rgba(255,176,32,0.12); color: var(--amber); }
+    .glyph-github { background: rgba(91,157,255,0.12); color: var(--blue); }
+    .glyph-system { background: rgba(154,158,165,0.12); color: var(--text-dim); }
+    .glyph-critical { background: rgba(255,93,93,0.12); color: var(--red); }
+    .glyph-done { background: rgba(61,214,140,0.12); color: var(--green); }
+    .event-main { flex: 1; min-width: 0; }
+    .event-summary { font-size: 13.5px; color: var(--text); margin-bottom: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tag {
+        font-family: 'IBM Plex Mono', monospace;
+        display: inline-block;
+        font-size: 10px;
+        color: var(--text-faint);
+        background: var(--border-soft);
+        padding: 2px 7px;
+        border-radius: 4px;
+        margin-right: 5px;
+        letter-spacing: 0.02em;
+    }
+    .event-meta { text-align: right; flex-shrink: 0; padding-left: 12px; }
+    .event-actor { font-size: 12px; color: var(--text-dim); margin-bottom: 2px; }
+    .event-time { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text-faint); }
+    .empty-state { text-align: center; padding: 90px 20px; color: var(--text-faint); }
+    .empty-glyph { font-family: 'IBM Plex Mono', monospace; font-size: 26px; color: var(--border); margin-bottom: 14px; }
+    .empty-title { color: var(--text-dim); font-size: 15px; margin-bottom: 6px; }
+    .empty-sub { font-size: 12.5px; max-width: 320px; margin: 0 auto; line-height: 1.6; }
+
+    @media (max-width: 720px) {
+        .sidebar { display: none; }
+        .main { padding: 20px; }
+        .stats-row { flex-wrap: wrap; }
+    }
+</style>
+</head>
+<body>
+
+    <aside class="sidebar">
+        <div class="brand">
+            <div class="brand-mark">T</div>
+            <div class="brand-name">TRAC</div>
+        </div>
+        <nav class="nav">
+            <div class="nav-item active"><span class="nav-dot"></span>Timeline</div>
+            <div class="nav-item"><span class="nav-dot"></span>Agents</div>
+            <div class="nav-item"><span class="nav-dot"></span>Repos</div>
+            <div class="nav-item"><span class="nav-dot"></span>People</div>
+        </nav>
+        <div class="sidebar-foot">
+            <div class="live-indicator"><span class="live-dot"></span>LIVE — polling 5s</div>
+            every signal, from every<br>source, in order.
+        </div>
+    </aside>
+
+    <main class="main">
+        <div class="page-header">
+            <div class="page-title">Engineering Intelligence</div>
+            <div class="page-sub">A single stream of everything your codebase and agents are doing.</div>
+        </div>
+
+        <div class="pulse-panel">
+            <div class="pulse-head">
+                <span class="pulse-label">Signal · last 24h</span>
+                <span class="pulse-count" id="pulseCount">0 events</span>
+            </div>
+            <div class="pulse-bars" id="pulseBars"></div>
+        </div>
+
+        <div class="stats-row" id="statsRow">
+            <div class="stat-chip">
+                <div class="stat-value" id="statTotal">0</div>
+                <div class="stat-label">Total events</div>
+            </div>
+            <div class="stat-chip">
+                <div class="stat-value" id="statToday">0</div>
+                <div class="stat-label">Today</div>
+            </div>
+            <div class="stat-chip">
+                <div class="stat-value" id="statSources">0</div>
+                <div class="stat-label">Active sources</div>
+            </div>
+        </div>
+
+        <div class="filters" id="filters">
+            <button class="filter-btn active" data-source="">All</button>
+        </div>
+
+        <div id="timeline"></div>
+    </main>
+
+<script>
+    const timeline = document.getElementById("timeline");
+    const filtersEl = document.getElementById("filters");
+    const pulseBars = document.getElementById("pulseBars");
+    const pulseCount = document.getElementById("pulseCount");
+    let currentSource = "";
+
+    async function fetchEvents(source = "") {
+        const url = source ? `/api/events?source=${encodeURIComponent(source)}&limit=200` : "/api/events?limit=200";
+        const res = await fetch(url);
+        return res.json();
+    }
+
+    function timeAgo(iso) {
+        const diffMs = Date.now() - new Date(iso).getTime();
+        const mins = Math.floor(diffMs / 60000);
+        if (mins < 1) return "just now";
+        if (mins < 60) return `${mins}m ago`;
+        const hrs = Math.floor(mins / 60);
+        if (hrs < 24) return `${hrs}h ago`;
+        const days = Math.floor(hrs / 24);
+        return `${days}d ago`;
+    }
+
+    function dayLabel(iso) {
+        const d = new Date(iso);
+        const today = new Date();
+        const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+        const sameDay = (a, b) => a.toDateString() === b.toDateString();
+        if (sameDay(d, today)) return "Today";
+        if (sameDay(d, yesterday)) return "Yesterday";
+        return d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+    }
+
+    function glyphFor(ev) {
+        const sev = (ev.summary || "").toLowerCase();
+        if (sev.includes("critical")) return { cls: "glyph-critical", ch: "!" };
+        if (ev.type?.startsWith("agent.")) return { cls: "glyph-agent", ch: "◆" };
+        if (ev.source === "github" || ev.type?.startsWith("pr.") || ev.type?.startsWith("commit")) return { cls: "glyph-github", ch: "⎇" };
+        if (ev.type?.includes("completed") || ev.type?.includes("merged")) return { cls: "glyph-done", ch: "✓" };
+        return { cls: "glyph-system", ch: "•" };
+    }
+
+    function renderStats(events) {
+        const today = new Date().toDateString();
+        const todayCount = events.filter(e => new Date(e.timestamp).toDateString() === today).length;
+        const sources = new Set(events.map(e => e.source));
+        document.getElementById("statTotal").textContent = events.length;
+        document.getElementById("statToday").textContent = todayCount;
+        document.getElementById("statSources").textContent = sources.size;
+    }
+
+    function renderPulse(events) {
+        const buckets = new Array(24).fill(0);
+        const now = Date.now();
+        events.forEach(e => {
+            const ageHrs = (now - new Date(e.timestamp).getTime()) / 3600000;
+            if (ageHrs >= 0 && ageHrs < 24) {
+                buckets[23 - Math.floor(ageHrs)]++;
+            }
+        });
+        const max = Math.max(...buckets, 1);
+        pulseBars.innerHTML = "";
+        buckets.forEach((count, i) => {
+            const bar = document.createElement("div");
+            bar.className = "pulse-bar" + (count === 0 ? " zero" : "");
+            const heightPct = count === 0 ? 6 : Math.max(10, (count / max) * 100);
+            bar.style.height = heightPct + "%";
+            bar.style.animationDelay = (i * 0.015) + "s";
+            bar.title = `${count} event(s)`;
+            pulseBars.appendChild(bar);
+        });
+        pulseCount.textContent = `${events.length} events`;
+    }
+
+    function renderEvents(events) {
+        timeline.innerHTML = "";
+        if (events.length === 0) {
+            timeline.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-glyph">◇</div>
+                    <div class="empty-title">No signal yet</div>
+                    <div class="empty-sub">Once your agents or repos start reporting, every event will land here in order.</div>
+                </div>`;
+            return;
+        }
+
+        let lastDay = null;
+        let dayContainer = null;
+
+        for (const ev of events) {
+            const label = dayLabel(ev.timestamp);
+            if (label !== lastDay) {
+                lastDay = label;
+                const group = document.createElement("div");
+                group.className = "day-group";
+                group.innerHTML = `<div class="day-header">${label}</div>`;
+                dayContainer = document.createElement("div");
+                group.appendChild(dayContainer);
+                timeline.appendChild(group);
+            }
+
+            const g = glyphFor(ev);
+            const card = document.createElement("div");
+            card.className = "event-card";
+            card.innerHTML = `
+                <div class="event-glyph ${g.cls}">${g.ch}</div>
+                <div class="event-main">
+                    <div class="event-summary">${ev.summary}</div>
+                    <span class="tag">${ev.source}</span>
+                    <span class="tag">${ev.type}</span>
+                    ${ev.repo ? `<span class="tag">${ev.repo}</span>` : ""}
+                </div>
+                <div class="event-meta">
+                    ${ev.actor ? `<div class="event-actor">${ev.actor}</div>` : ""}
+                    <div class="event-time">${timeAgo(ev.timestamp)}</div>
+                </div>
+            `;
+            dayContainer.appendChild(card);
+        }
+    }
+
+    function renderFilters(sources) {
+        filtersEl.innerHTML = `<button class="filter-btn active" data-source="">All</button>`;
+        for (const src of sources) {
+            const btn = document.createElement("button");
+            btn.className = "filter-btn";
+            btn.dataset.source = src;
+            btn.textContent = src;
+            filtersEl.appendChild(btn);
+        }
+        filtersEl.querySelectorAll(".filter-btn").forEach(btn => {
+            btn.addEventListener("click", async () => {
+                filtersEl.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
+                btn.classList.add("active");
+                currentSource = btn.dataset.source;
+                const events = await fetchEvents(currentSource);
+                renderEvents(events);
+            });
+        });
+    }
+
+    async function refresh() {
+        const allEvents = await fetchEvents();
+        const uniqueSources = [...new Set(allEvents.map(e => e.source))];
+        renderFilters(uniqueSources);
+        renderStats(allEvents);
+        renderPulse(allEvents);
+        const filtered = currentSource ? allEvents.filter(e => e.source === currentSource) : allEvents;
+        renderEvents(filtered);
+    }
+
+    refresh();
+    setInterval(refresh, 5000);
+</script>
+</body>
+</html>

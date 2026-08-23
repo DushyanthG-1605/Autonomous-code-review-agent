@@ -8,6 +8,7 @@ from anthropic import Anthropic
 from agent.state import ReviewState
 from tools.github_tools import fetch_pr_files, fetch_file_content, post_review
 from tools.rag_tools import clone_repo_at_ref, build_vector_store, retrieve_related_context
+from tools.trac_reporter import report_to_trac
 
 
 # ---------- Node 1: fetch_diff ----------
@@ -169,8 +170,10 @@ def post_comments_node(state: ReviewState) -> Dict[str, Any]:
     ]
 
     summary_lines = [f"### Automated Code Review\n", f"Found **{len(findings)}** issue(s):\n"]
+    severity_counts = {"critical": 0, "major": 0, "minor": 0, "nit": 0}
     for sev in ("critical", "major", "minor", "nit"):
         count = sum(1 for f in findings if f.get("severity") == sev)
+        severity_counts[sev] = count
         if count:
             summary_lines.append(f"- {sev.capitalize()}: {count}")
 
@@ -182,6 +185,20 @@ def post_comments_node(state: ReviewState) -> Dict[str, Any]:
         summary_body=summary,
         inline_comments=inline,
         request_changes=state["has_critical"],
+    )
+
+    # Report this completed review to TRAC — only after GitHub post succeeds
+    trac_summary = (
+        f"Reviewed PR #{state['pr_number']} — "
+        f"found {severity_counts['critical']} critical, {severity_counts['major']} major issue(s)"
+    )
+    report_to_trac(
+        event_type="agent.review_completed",
+        source="code-review-agent",
+        summary=trac_summary,
+        repo=state["repo_full_name"],
+        ref=f"PR #{state['pr_number']}",
+        actor="Dushyanth Gadapala",
     )
 
     return {"final_summary": summary, "posted": True}

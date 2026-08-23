@@ -9,3 +9,5 @@ fastapi
 uvicorn
 ruff
 python-dotenv
+aiofiles
+requests
