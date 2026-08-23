@@ -8,6 +8,8 @@ def calculate_average(numbers):
     return total / len(numbers)
 
 def get_discount(price, discount_percent):
+    if discount_percent > 100:
+        discount_percent = 100
     discounted = price - (price * discount_percent / 100)
     return discounted
 
