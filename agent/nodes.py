@@ -7,9 +7,14 @@ import time
 from typing import Dict, Any
 
 from groq import Groq, RateLimitError, BadRequestError
+from tools.github_tools import (
+    ReviewPublicationError,
+    fetch_pr_files,
+    fetch_pr_author,
+    post_review,
+)
 
 from agent.state import ReviewState
-from tools.github_tools import fetch_pr_files, fetch_pr_author, post_review
 from tools.git_tools import clone_pr_head
 from tools.rag_tools import build_vector_store, retrieve_related_context
 from tools.secret_scan import scan_patch
@@ -283,12 +288,19 @@ def post_comments_node(state: ReviewState) -> Dict[str, Any]:
     ]
 
     summary_lines = [f"### Automated Code Review\n", f"Found **{len(findings)}** issue(s):\n"]
-    severity_counts = {"critical": 0, "major": 0, "minor": 0, "nit": 0}
+    severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    severity_names = {
+        "critical": "critical",
+        "major": "high",
+        "minor": "medium",
+        "nit": "low",
+    }
     for sev in ("critical", "major", "minor", "nit"):
         count = sum(1 for f in findings if f.get("severity") == sev)
-        severity_counts[sev] = count
+        display_severity = severity_names[sev]
+        severity_counts[display_severity] = count
         if count:
-            summary_lines.append(f"- {sev.capitalize()}: {count}")
+            summary_lines.append(f"- {display_severity.capitalize()}: {count}")
 
     review_notes = state.get("review_notes", [])
     if review_notes:
@@ -297,26 +309,81 @@ def post_comments_node(state: ReviewState) -> Dict[str, Any]:
 
     summary = "\n".join(summary_lines)
 
-    post_review(
-        repo_full_name=state["repo_full_name"],
-        pr_number=state["pr_number"],
-        summary_body=summary,
-        inline_comments=inline,
-        request_changes=state["has_critical"],
+    trac_summary = (
+        f"Reviewed PR #{state['pr_number']} - found {severity_counts['critical']} critical, "
+        f"{severity_counts['high']} high, {severity_counts['medium']} medium, "
+        f"{severity_counts['low']} low issue(s)"
+    )
+    review_metadata = {
+        "analysis_status": "analysis_completed",
+        "issue_counts": severity_counts,
+        "findings": findings,
+        "review_notes": review_notes,
+        "publication_status": "publication_pending",
+    }
+
+    report_to_trac(
+        event_type="agent.review_publication_pending",
+        source="code-review-agent",
+        summary=trac_summary,
+        repo=state["repo_full_name"].split("/")[-1],
+        ref=f"PR #{state['pr_number']}",
+        actor=state.get("pr_author") or "unknown",
+        execution_id=state["execution_id"],
+        status="publication_pending",
+        metadata={**review_metadata, "github_posted": False},
     )
 
-    # Report this completed review to TRAC — only after GitHub post succeeds
-    trac_summary = (
-        f"Reviewed PR #{state['pr_number']} — "
-        f"found {severity_counts['critical']} critical, {severity_counts['major']} major issue(s)"
-    )
+    try:
+        post_review(
+            repo_full_name=state["repo_full_name"],
+            pr_number=state["pr_number"],
+            summary_body=summary,
+            inline_comments=inline,
+            request_changes=state["has_critical"],
+        )
+    except ReviewPublicationError as exc:
+        failure_summary = (
+            f"{trac_summary} (GitHub review publication failed with status {exc.status})"
+        )
+        report_to_trac(
+            event_type="agent.review_failed",
+            source="code-review-agent",
+            summary=failure_summary,
+            repo=state["repo_full_name"].split("/")[-1],
+            ref=f"PR #{state['pr_number']}",
+            actor=state.get("pr_author") or "unknown",
+            execution_id=state["execution_id"],
+            status="publication_failed",
+            metadata={
+                **review_metadata,
+                "publication_status": "publication_failed",
+                "github_posted": False,
+                "github_error": {
+                    "status": exc.status,
+                    "message": exc.message,
+                    "endpoint": exc.endpoint,
+                    "stage": exc.stage,
+                    "accepted_permissions": exc.accepted_permissions,
+                },
+            },
+        )
+        raise RuntimeError(f"{exc}; analyzed findings and status were saved to TRAC.") from exc
+
     report_to_trac(
         event_type="agent.review_completed",
         source="code-review-agent",
         summary=trac_summary,
-        repo=state["repo_full_name"],
+        repo=state["repo_full_name"].split("/")[-1],
         ref=f"PR #{state['pr_number']}",
         actor=state.get("pr_author") or "unknown",
+        execution_id=state["execution_id"],
+        status="fully_completed",
+        metadata={
+            **review_metadata,
+            "publication_status": "published",
+            "github_posted": True,
+        },
     )
 
     return {"final_summary": summary, "posted": True}

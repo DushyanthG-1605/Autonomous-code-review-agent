@@ -2,445 +2,1287 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TRAC</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#090a0d">
+<title>TRAC — Engineering Intelligence</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
     :root {
-        --bg: #08090b;
-        --panel: #111316;
-        --panel-hover: #15181c;
-        --border: #1c1f24;
-        --border-soft: #16181c;
-        --text: #e8e9eb;
-        --text-dim: #9a9ea5;
-        --text-faint: #5c6067;
-        --amber: #ffb020;
-        --amber-dim: #7a5a18;
-        --green: #3dd68c;
-        --red: #ff5d5d;
-        --blue: #5b9dff;
+        color-scheme: dark;
+        --bg: #090a0d;
+        --sidebar: #0c0d10;
+        --surface: #111317;
+        --surface-raised: #15181d;
+        --surface-hover: #191c22;
+        --line: #22252c;
+        --line-soft: #1a1d23;
+        --text: #e8eaf0;
+        --muted: #9a9eaa;
+        --subtle: #656a76;
+        --amber: #f2b84b;
+        --amber-soft: rgba(242,184,75,.12);
+        --green: #54d6a0;
+        --green-soft: rgba(84,214,160,.12);
+        --red: #ff7777;
+        --red-soft: rgba(255,119,119,.12);
+        --blue: #79aaff;
+        --blue-soft: rgba(121,170,255,.12);
+        --purple: #b6a0ff;
+        --radius: 12px;
+        --mono: "DM Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+        --sans: "DM Sans", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-        background: var(--bg);
-        color: var(--text);
-        font-family: 'Inter', -apple-system, sans-serif;
-        display: flex;
-        min-height: 100vh;
-        font-size: 14px;
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--bg); scroll-behavior: smooth; }
+    body { margin: 0; min-height: 100vh; color: var(--text); background: var(--bg); font: 14px/1.5 var(--sans); }
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
+        outline: 2px solid var(--amber); outline-offset: 2px;
     }
-
-    ::selection { background: var(--amber-dim); color: var(--text); }
+    ::selection { color: #14110a; background: var(--amber); }
+    .app-shell { display: flex; min-height: 100vh; }
 
     .sidebar {
-        width: 210px;
-        flex-shrink: 0;
-        border-right: 1px solid var(--border);
-        padding: 24px 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 28px;
+        width: 238px; flex: 0 0 238px; display: flex; flex-direction: column;
+        padding: 21px 14px 16px; background: var(--sidebar); border-right: 1px solid var(--line-soft);
+        transition: width .2s ease, flex-basis .2s ease, transform .2s ease; z-index: 20;
     }
-
-    .brand { display: flex; align-items: center; gap: 9px; }
+    .brand { display: flex; align-items: center; gap: 11px; padding: 1px 9px 24px; }
     .brand-mark {
-        width: 22px; height: 22px;
-        border: 1.5px solid var(--amber);
-        border-radius: 4px;
-        display: flex; align-items: center; justify-content: center;
-        color: var(--amber);
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 11px;
-        font-weight: 700;
+        display: grid; width: 31px; height: 31px; place-items: center; color: var(--amber);
+        border: 1px solid rgba(242,184,75,.48); border-radius: 9px; background: var(--amber-soft);
     }
-    .brand-name {
-        font-family: 'IBM Plex Mono', monospace;
-        font-weight: 700;
-        font-size: 15px;
-        letter-spacing: 0.14em;
-    }
-
-    .nav { display: flex; flex-direction: column; gap: 2px; }
+    .brand-copy { min-width: 0; }
+    .brand-name { font: 600 13px var(--mono); letter-spacing: .16em; }
+    .brand-sub { margin-top: 2px; color: var(--subtle); font-size: 10px; letter-spacing: .04em; }
+    .nav-label { padding: 10px 10px 7px; color: #555a65; font: 500 9px var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+    .nav { display: grid; gap: 4px; }
     .nav-item {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 12px;
-        color: var(--text-faint);
-        padding: 8px 10px;
-        border-radius: 6px;
-        letter-spacing: 0.03em;
-        display: flex;
-        align-items: center;
-        gap: 9px;
-        cursor: default;
+        display: flex; align-items: center; gap: 11px; min-height: 39px; width: 100%;
+        border: 1px solid transparent; border-radius: 8px; padding: 0 10px;
+        color: var(--muted); background: transparent; text-align: left; cursor: pointer;
+        transition: color .16s ease, border-color .16s ease, background .16s ease;
     }
-    .nav-item.active { color: var(--text); background: var(--panel); }
-    .nav-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: 0.5; }
-    .nav-item.active .nav-dot { background: var(--amber); opacity: 1; }
+    .nav-item:hover { color: var(--text); background: #14161b; }
+    .nav-item.active { color: var(--text); background: #191a1e; border-color: #292a2d; }
+    .nav-item.active .nav-icon { color: var(--amber); }
+    .nav-icon { width: 17px; height: 17px; flex: 0 0 17px; color: #858a95; }
+    .nav-text { flex: 1; font-size: 12px; font-weight: 500; }
+    .nav-count { color: var(--subtle); font: 10px var(--mono); }
+    .sidebar-bottom { margin-top: auto; padding: 15px 9px 3px; border-top: 1px solid var(--line-soft); }
+    .system-state { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+    .sidebar-caption { margin-top: 8px; color: var(--subtle); font: 10px var(--mono); }
 
-    .sidebar-foot {
-        margin-top: auto;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 10.5px;
-        color: var(--text-faint);
-        line-height: 1.6;
+    .main { width: min(100% - 238px, 1530px); min-width: 0; margin: 0 auto; padding: 28px clamp(22px, 3.2vw, 52px) 48px; }
+    .topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin-bottom: 27px; }
+    .heading-group { min-width: 0; }
+    .eyebrow { display: flex; align-items: center; gap: 8px; color: var(--amber); font: 10px var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+    .eyebrow-rule { width: 17px; height: 1px; background: var(--amber); opacity: .7; }
+    h1 { margin: 8px 0 5px; font-size: clamp(24px, 2.2vw, 30px); line-height: 1.15; font-weight: 600; letter-spacing: -.045em; }
+    .subtitle { color: var(--muted); font-size: 12px; }
+    .top-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+    .date-label { margin-right: 4px; color: var(--muted); font: 10px var(--mono); white-space: nowrap; }
+    .select, .input, .button, .icon-button {
+        min-height: 36px; border: 1px solid var(--line); border-radius: 8px; color: var(--text);
+        background: var(--surface); transition: border-color .15s ease, background .15s ease, transform .15s ease;
     }
-    .live-indicator { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
-    .live-dot {
-        width: 6px; height: 6px; border-radius: 50%;
-        background: var(--green);
-        box-shadow: 0 0 0 0 rgba(61,214,140,0.5);
-        animation: pulse-dot 2s infinite;
-    }
-    @keyframes pulse-dot {
-        0% { box-shadow: 0 0 0 0 rgba(61,214,140,0.45); }
-        70% { box-shadow: 0 0 0 6px rgba(61,214,140,0); }
-        100% { box-shadow: 0 0 0 0 rgba(61,214,140,0); }
-    }
+    .select { padding: 0 31px 0 10px; color: var(--muted); font-size: 11px; cursor: pointer; }
+    .select:hover, .input:hover, .button:hover, .icon-button:hover { border-color: #3a3e48; background: var(--surface-raised); }
+    .button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 12px; cursor: pointer; font-size: 11px; }
+    .button.primary { color: #16120a; background: var(--amber); border-color: var(--amber); font-weight: 600; }
+    .button.primary:hover { background: #ffcb68; border-color: #ffcb68; }
+    .icon-button { display: inline-grid; width: 36px; place-items: center; cursor: pointer; }
+    .icon-button svg, .button svg { width: 15px; height: 15px; }
+    .refreshing svg { animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .mobile-menu { display: none; }
 
-    .main { flex: 1; padding: 32px 40px 40px; max-width: 1080px; }
-    .page-header { margin-bottom: 28px; }
-    .page-title {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 13px;
-        color: var(--text-faint);
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        margin-bottom: 6px;
-    }
-    .page-sub { color: var(--text-dim); font-size: 14px; }
+    .view { display: none; animation: enter .2s ease both; }
+    .view.active { display: block; }
+    @keyframes enter { from { opacity: .45; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .section-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin: 0 0 12px; }
+    .section-heading h2 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+    .section-hint { color: var(--subtle); font-size: 10px; }
+    .range-tabs { display: flex; gap: 3px; padding: 3px; border: 1px solid var(--line-soft); border-radius: 8px; background: #0d0f12; }
+    .range-tab { border: 0; border-radius: 5px; padding: 5px 8px; color: var(--subtle); background: transparent; font: 10px var(--mono); cursor: pointer; }
+    .range-tab.active { color: var(--text); background: #24262b; }
 
-    .pulse-panel {
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 18px 20px 14px;
-        margin-bottom: 20px;
+    .kpi-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 11px; margin-bottom: 20px; }
+    .kpi-card {
+        position: relative; min-width: 0; padding: 14px 15px 13px; overflow: hidden;
+        border: 1px solid var(--line); border-radius: 11px; background: var(--surface);
+        transition: transform .18s ease, border-color .18s ease, background .18s ease;
     }
-    .pulse-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
-    .pulse-label {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 10.5px;
-        color: var(--text-faint);
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-    }
-    .pulse-count { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--amber); }
-    .pulse-bars { display: flex; align-items: flex-end; gap: 3px; height: 44px; }
-    .pulse-bar {
-        flex: 1;
-        background: linear-gradient(180deg, var(--amber) 0%, var(--amber-dim) 100%);
-        border-radius: 2px 2px 0 0;
-        min-height: 3px;
-        opacity: 0.85;
-        transform-origin: bottom;
-        animation: rise 0.5s ease-out backwards;
-    }
-    .pulse-bar.zero { background: var(--border-soft); opacity: 1; }
-    @keyframes rise { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+    .kpi-card:hover { transform: translateY(-2px); border-color: #373a42; background: var(--surface-raised); }
+    .kpi-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .kpi-label { color: var(--muted); font-size: 10px; font-weight: 500; }
+    .kpi-icon { display: grid; width: 25px; height: 25px; place-items: center; color: var(--amber); border: 1px solid #292a2b; border-radius: 7px; background: #191a1c; }
+    .kpi-icon svg { width: 14px; height: 14px; }
+    .kpi-value { margin-top: 11px; font: 500 25px/1 var(--mono); letter-spacing: -.055em; }
+    .kpi-foot { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-top: 10px; color: var(--subtle); font-size: 9px; }
+    .trend { font: 9px var(--mono); white-space: nowrap; }
+    .trend.up { color: var(--green); }
+    .trend.down { color: var(--red); }
+    .trend.flat { color: var(--subtle); }
+    .kpi-card.success .kpi-icon { color: var(--green); background: var(--green-soft); }
+    .kpi-card.failure .kpi-icon { color: var(--red); background: var(--red-soft); }
+    .kpi-card.issues .kpi-icon { color: var(--amber); }
+    .kpi-card.agents .kpi-icon { color: var(--blue); background: var(--blue-soft); }
 
-    .stats-row { display: flex; gap: 12px; margin-bottom: 24px; }
-    .stat-chip {
-        flex: 1;
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 14px 18px;
-    }
-    .stat-value { font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 600; }
-    .stat-label { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
+    .analytics-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(280px, .9fr); gap: 12px; margin-bottom: 22px; }
+    .panel { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+    .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 15px 16px 0; }
+    .panel-title { margin: 0; font-size: 11px; font-weight: 600; }
+    .panel-subtitle { margin-top: 3px; color: var(--subtle); font-size: 9px; }
+    .panel-body { padding: 14px 16px 16px; }
+    .chart-box { position: relative; height: 185px; }
+    .chart-box svg { display: block; width: 100%; height: 100%; overflow: visible; }
+    .chart-empty { display: grid; height: 100%; place-items: center; color: var(--subtle); font-size: 11px; text-align: center; }
+    .severity-layout { display: flex; align-items: center; justify-content: center; gap: clamp(15px, 3vw, 38px); min-height: 183px; }
+    .donut-wrap { position: relative; width: 148px; height: 148px; flex: 0 0 148px; }
+    .donut-wrap svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+    .donut-total { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; pointer-events: none; }
+    .donut-total strong { font: 500 24px var(--mono); }
+    .donut-total span { color: var(--subtle); font-size: 9px; }
+    .legend { display: grid; gap: 10px; min-width: 96px; }
+    .legend-item { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; }
+    .legend-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 2px; }
+    .legend-value { margin-left: auto; color: var(--text); font: 10px var(--mono); }
+    .lower-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 12px; margin-bottom: 24px; }
+    .breakdown { display: grid; gap: 13px; }
+    .break-row { display: grid; grid-template-columns: 72px 1fr 30px; gap: 9px; align-items: center; color: var(--muted); font-size: 10px; }
+    .break-track { height: 7px; overflow: hidden; border-radius: 6px; background: #22252b; }
+    .break-fill { height: 100%; min-width: 0; border-radius: inherit; transition: width .35s ease; }
+    .break-count { text-align: right; color: var(--text); font: 10px var(--mono); }
+    .agent-bars { display: grid; gap: 9px; }
+    .agent-row { display: grid; grid-template-columns: minmax(85px, 1.1fr) minmax(45px, 2fr) 25px; gap: 9px; align-items: center; font-size: 10px; }
+    .agent-name { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+    .agent-track { height: 6px; overflow: hidden; border-radius: 6px; background: #22252b; }
+    .agent-fill { height: 100%; border-radius: inherit; background: var(--amber); }
+    .agent-count { text-align: right; color: var(--text); font: 10px var(--mono); }
 
-    .filters { display: flex; gap: 8px; margin-bottom: 22px; flex-wrap: wrap; }
-    .filter-btn {
-        font-family: 'IBM Plex Mono', monospace;
-        background: transparent;
-        border: 1px solid var(--border);
-        color: var(--text-dim);
-        padding: 6px 13px;
-        border-radius: 20px;
-        cursor: pointer;
-        font-size: 11.5px;
-        letter-spacing: 0.02em;
-        transition: all 0.15s ease;
-    }
-    .filter-btn:hover { border-color: var(--text-faint); color: var(--text); }
-    .filter-btn.active { background: var(--amber); border-color: var(--amber); color: #1a1300; font-weight: 600; }
-
-    .day-group { margin-bottom: 22px; }
-    .day-header {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 10.5px;
-        color: var(--text-faint);
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        margin-bottom: 8px;
-        padding-left: 2px;
-    }
+    .timeline-section { margin-top: 4px; }
+    .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px; border: 1px solid var(--line); border-radius: 10px 10px 0 0; background: #0e1013; }
+    .input-wrap { position: relative; flex: 1 1 190px; min-width: 150px; }
+    .input-wrap svg { position: absolute; top: 10px; left: 10px; width: 14px; height: 14px; color: var(--subtle); pointer-events: none; }
+    .input { width: 100%; min-height: 34px; padding: 0 10px 0 31px; font-size: 10px; }
+    .filter-select { min-height: 34px; font-size: 10px; }
+    .toolbar-count { margin-left: auto; color: var(--subtle); font: 10px var(--mono); white-space: nowrap; }
+    .event-list { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 10px 10px; background: #0d0f12; }
     .event-card {
-        background: var(--panel);
-        border: 1px solid var(--border-soft);
-        border-radius: 8px;
-        padding: 13px 16px;
-        margin-bottom: 6px;
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        transition: background 0.12s ease, border-color 0.12s ease;
+        position: relative; display: grid; grid-template-columns: 31px minmax(0, 1fr) auto; gap: 11px;
+        padding: 13px 14px; border: 1px solid var(--line-soft); border-radius: 9px;
+        background: var(--surface); cursor: pointer; text-align: left;
+        transition: border-color .16s ease, background .16s ease, transform .16s ease;
     }
-    .event-card:hover { background: var(--panel-hover); border-color: var(--border); }
-    .event-glyph {
-        width: 26px; height: 26px;
-        border-radius: 6px;
-        display: flex; align-items: center; justify-content: center;
-        font-size: 13px;
-        flex-shrink: 0;
-        font-family: 'IBM Plex Mono', monospace;
-    }
-    .glyph-agent { background: rgba(255,176,32,0.12); color: var(--amber); }
-    .glyph-github { background: rgba(91,157,255,0.12); color: var(--blue); }
-    .glyph-system { background: rgba(154,158,165,0.12); color: var(--text-dim); }
-    .glyph-critical { background: rgba(255,93,93,0.12); color: var(--red); }
-    .glyph-done { background: rgba(61,214,140,0.12); color: var(--green); }
-    .event-main { flex: 1; min-width: 0; }
-    .event-summary { font-size: 13.5px; color: var(--text); margin-bottom: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .tag {
-        font-family: 'IBM Plex Mono', monospace;
-        display: inline-block;
-        font-size: 10px;
-        color: var(--text-faint);
-        background: var(--border-soft);
-        padding: 2px 7px;
-        border-radius: 4px;
-        margin-right: 5px;
-        letter-spacing: 0.02em;
-    }
-    .event-meta { text-align: right; flex-shrink: 0; padding-left: 12px; }
-    .event-actor { font-size: 12px; color: var(--text-dim); margin-bottom: 2px; }
-    .event-time { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text-faint); }
-    .empty-state { text-align: center; padding: 90px 20px; color: var(--text-faint); }
-    .empty-glyph { font-family: 'IBM Plex Mono', monospace; font-size: 26px; color: var(--border); margin-bottom: 14px; }
-    .empty-title { color: var(--text-dim); font-size: 15px; margin-bottom: 6px; }
-    .empty-sub { font-size: 12.5px; max-width: 320px; margin: 0 auto; line-height: 1.6; }
+    .event-card:hover { transform: translateY(-1px); border-color: #363a43; background: var(--surface-raised); }
+    .event-card.status-success { border-left: 2px solid var(--green); }
+    .event-card.status-failed { border-left: 2px solid var(--red); }
+    .event-card.status-pending { border-left: 2px solid var(--amber); }
+    .event-card.status-partial { border-left: 2px solid var(--blue); }
+    .event-symbol { display: grid; width: 29px; height: 29px; place-items: center; border-radius: 8px; color: var(--amber); background: var(--amber-soft); }
+    .event-symbol svg { width: 15px; height: 15px; }
+    .status-success .event-symbol { color: var(--green); background: var(--green-soft); }
+    .status-failed .event-symbol { color: var(--red); background: var(--red-soft); }
+    .status-pending .event-symbol { color: var(--amber); background: var(--amber-soft); }
+    .status-partial .event-symbol { color: var(--blue); background: var(--blue-soft); }
+    .event-content { min-width: 0; }
+    .event-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .event-title { overflow: hidden; color: var(--text); font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+    .pill { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 20px; padding: 2px 7px; color: var(--muted); font: 9px var(--mono); white-space: nowrap; }
+    .pill.success { color: var(--green); border-color: rgba(84,214,160,.22); background: var(--green-soft); }
+    .pill.failed { color: var(--red); border-color: rgba(255,119,119,.22); background: var(--red-soft); }
+    .pill.pending { color: var(--amber); border-color: rgba(242,184,75,.22); background: var(--amber-soft); }
+    .pill.partial { color: var(--blue); border-color: rgba(121,170,255,.22); background: var(--blue-soft); }
+    .event-meta-line { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 5px; color: var(--subtle); font-size: 9px; }
+    .event-meta-line span { display: inline-flex; align-items: center; gap: 4px; }
+    .event-meta-line svg { width: 11px; height: 11px; }
+    .event-severities { display: flex; justify-content: flex-end; align-items: center; gap: 5px; flex-wrap: wrap; }
+    .severity-chip { padding: 3px 6px; border-radius: 5px; color: var(--muted); background: #1c1f24; font: 9px var(--mono); white-space: nowrap; }
+    .severity-chip.critical { color: var(--red); background: var(--red-soft); }
+    .severity-chip.high { color: #ffaf74; background: rgba(255,175,116,.11); }
+    .severity-chip.medium { color: var(--amber); background: var(--amber-soft); }
+    .severity-chip.low { color: var(--blue); background: var(--blue-soft); }
 
-    @media (max-width: 720px) {
-        .sidebar { display: none; }
-        .main { padding: 20px; }
-        .stats-row { flex-wrap: wrap; }
+    .page-intro { display: flex; justify-content: space-between; align-items: end; gap: 12px; margin-bottom: 18px; }
+    .page-intro h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -.03em; }
+    .page-intro p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+    .entity-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; }
+    .entity-card {
+        padding: 15px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+        transition: transform .16s ease, border-color .16s ease, background .16s ease;
+    }
+    .entity-card:hover { transform: translateY(-2px); border-color: #383b43; background: var(--surface-raised); }
+    .entity-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+    .entity-title { margin: 0; overflow-wrap: anywhere; font-size: 12px; font-weight: 600; }
+    .entity-sub { margin-top: 4px; color: var(--subtle); font-size: 10px; }
+    .entity-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+    .entity-stat strong { display: block; font: 500 16px var(--mono); }
+    .entity-stat span { display: block; margin-top: 3px; color: var(--subtle); font-size: 9px; }
+    .entity-last { margin-top: 12px; color: var(--subtle); font-size: 9px; }
+    .entity-action { margin-top: 12px; border: 0; padding: 0; color: var(--amber); background: transparent; font-size: 10px; cursor: pointer; }
+    .entity-action:hover { text-decoration: underline; }
+    .empty-state, .error-state, .loading-state {
+        display: grid; min-height: 150px; place-content: center; justify-items: center; gap: 8px;
+        padding: 24px; border: 1px dashed var(--line); border-radius: 10px; color: var(--subtle); text-align: center;
+    }
+    .empty-state strong, .error-state strong { color: var(--text); font-size: 12px; }
+    .empty-state span, .error-state span { max-width: 360px; font-size: 10px; }
+    .skeleton { height: 92px; border-radius: 10px; background: linear-gradient(90deg, #121418 20%, #1a1d22 38%, #121418 62%); background-size: 300% 100%; animation: shimmer 1.4s ease infinite; }
+    @keyframes shimmer { to { background-position: -150% 0; } }
+
+    .drawer-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.62); opacity: 0; pointer-events: none; transition: opacity .2s ease; }
+    .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+    .detail-drawer {
+        position: fixed; top: 0; right: 0; z-index: 41; display: flex; flex-direction: column;
+        width: min(540px, 100%); height: 100dvh; border-left: 1px solid var(--line);
+        background: #101216; transform: translateX(102%); transition: transform .22s ease;
+    }
+    .detail-drawer.open { transform: translateX(0); }
+    .drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px; border-bottom: 1px solid var(--line); }
+    .drawer-head h2 { margin: 5px 0 0; font-size: 15px; line-height: 1.4; }
+    .drawer-content { overflow: auto; padding: 18px 20px 28px; }
+    .detail-group { margin-bottom: 20px; }
+    .detail-label { margin-bottom: 8px; color: var(--subtle); font: 9px var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .detail-field { min-width: 0; padding: 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface); }
+    .detail-field span { display: block; color: var(--subtle); font-size: 9px; }
+    .detail-field strong { display: block; margin-top: 4px; overflow-wrap: anywhere; color: var(--text); font-size: 10px; font-weight: 500; }
+    .finding-list { display: grid; gap: 8px; }
+    .finding { padding: 10px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+    .finding-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .finding-path { color: var(--muted); font: 9px var(--mono); overflow-wrap: anywhere; }
+    .finding-comment { color: var(--text); font-size: 10px; line-height: 1.55; }
+    .detail-link { display: inline-flex; align-items: center; gap: 7px; margin-top: 9px; color: var(--blue); font-size: 10px; text-decoration: none; }
+    .detail-link:hover { text-decoration: underline; }
+    .toast { position: fixed; right: 20px; bottom: 20px; z-index: 60; max-width: min(420px, calc(100vw - 40px)); padding: 11px 14px; border: 1px solid rgba(255,119,119,.35); border-radius: 9px; color: #ffdada; background: #241719; box-shadow: 0 12px 40px rgba(0,0,0,.35); font-size: 11px; opacity: 0; transform: translateY(8px); pointer-events: none; transition: .2s ease; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .hidden { display: none !important; }
+
+    @media (max-width: 1200px) {
+        .kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .main { width: calc(100% - 238px); padding-inline: 25px; }
+    }
+    @media (max-width: 900px) {
+        .sidebar { width: 68px; flex-basis: 68px; padding-inline: 9px; }
+        .brand { justify-content: center; padding-inline: 0; }
+        .brand-copy, .nav-label, .nav-text, .nav-count, .sidebar-caption { display: none; }
+        .nav-item { justify-content: center; padding: 0; }
+        .sidebar-bottom { display: flex; justify-content: center; padding-inline: 0; }
+        .system-state { font-size: 0; }
+        .main { width: calc(100% - 68px); }
+        .analytics-grid { grid-template-columns: minmax(0, 1.25fr) minmax(250px, .9fr); }
+        .lower-grid { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 680px) {
+        .app-shell { display: block; }
+        .sidebar { position: fixed; inset: 0 auto 0 0; width: 248px; transform: translateX(-101%); padding: 18px 14px; }
+        .sidebar.mobile-open { transform: translateX(0); box-shadow: 20px 0 60px rgba(0,0,0,.4); }
+        .brand { justify-content: flex-start; padding-inline: 9px; }
+        .brand-copy, .nav-label, .nav-text, .nav-count, .sidebar-caption { display: block; }
+        .nav-item { justify-content: flex-start; padding-inline: 10px; }
+        .sidebar-bottom { display: block; padding-inline: 9px; }
+        .system-state { font-size: 11px; }
+        .main { width: 100%; padding: 18px 14px 32px; }
+        .topbar { align-items: flex-start; gap: 10px; margin-bottom: 21px; }
+        .top-actions { gap: 6px; }
+        .date-label { display: none; }
+        .mobile-menu { display: inline-grid; flex: 0 0 36px; }
+        .top-actions .range-select { max-width: 116px; }
+        .top-actions .refresh-label { display: none; }
+        .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        .kpi-card { padding: 12px; }
+        .kpi-value { font-size: 22px; }
+        .analytics-grid, .lower-grid { grid-template-columns: 1fr; }
+        .chart-box { height: 160px; }
+        .severity-layout { justify-content: space-evenly; }
+        .toolbar { gap: 6px; padding: 9px; }
+        .input-wrap { flex-basis: 100%; }
+        .filter-select { flex: 1 1 43%; min-width: 0; }
+        .toolbar-count { width: 100%; margin-left: 0; }
+        .event-card { grid-template-columns: 29px minmax(0, 1fr); padding: 11px; }
+        .event-severities { grid-column: 2; justify-content: flex-start; }
+        .entity-grid { grid-template-columns: 1fr; }
+        .page-intro { align-items: flex-start; flex-direction: column; }
+        .detail-drawer { width: 100%; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
     }
 </style>
 </head>
 <body>
-
-    <aside class="sidebar">
+<div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="Main navigation">
         <div class="brand">
-            <div class="brand-mark">T</div>
-            <div class="brand-name">TRAC</div>
+            <div class="brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19V5h14"/><path d="M8 16h3l3-5h3"/></svg>
+            </div>
+            <div class="brand-copy"><div class="brand-name">TRAC</div><div class="brand-sub">Engineering Intelligence</div></div>
         </div>
-        <nav class="nav">
-            <div class="nav-item active"><span class="nav-dot"></span>Timeline</div>
-            <div class="nav-item"><span class="nav-dot"></span>Agents</div>
-            <div class="nav-item"><span class="nav-dot"></span>Repos</div>
-            <div class="nav-item"><span class="nav-dot"></span>People</div>
+        <div class="nav-label">Workspace</div>
+        <nav class="nav" id="navigation">
+            <button class="nav-item active" data-page="overview"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/></svg><span class="nav-text">Overview</span></button>
+            <button class="nav-item" data-page="timeline"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="2.5" cy="6" r=".5" fill="currentColor"/><circle cx="2.5" cy="12" r=".5" fill="currentColor"/><circle cx="2.5" cy="18" r=".5" fill="currentColor"/></svg><span class="nav-text">Timeline</span><span class="nav-count" id="navTimelineCount">—</span></button>
+            <button class="nav-item" data-page="agents"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="16" height="13" rx="3"/><path d="M9 7V5a3 3 0 0 1 6 0v2M8 13h.01M16 13h.01M9 17h6"/></svg><span class="nav-text">Agents</span><span class="nav-count" id="navAgentCount">—</span></button>
+            <button class="nav-item" data-page="repositories"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5M8 13h8M8 17h8"/></svg><span class="nav-text">Repositories</span><span class="nav-count" id="navRepoCount">—</span></button>
+            <button class="nav-item" data-page="people"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3 20v-1a6 6 0 0 1 12 0v1M16 5.5a3 3 0 0 1 0 5.8M18 14a5 5 0 0 1 3 4.6V20"/></svg><span class="nav-text">People</span><span class="nav-count" id="navPeopleCount">—</span></button>
         </nav>
-        <div class="sidebar-foot">
-            <div class="live-indicator"><span class="live-dot"></span>LIVE — polling 5s</div>
-            every signal, from every<br>source, in order.
+        <div class="sidebar-bottom">
+            <div class="system-state"><span class="status-dot" id="systemDot"></span><span id="systemLabel">Connecting</span></div>
+            <div class="sidebar-caption" id="lastUpdated">Waiting for event data</div>
         </div>
     </aside>
 
     <main class="main">
-        <div class="page-header">
-            <div class="page-title">Engineering Intelligence</div>
-            <div class="page-sub">A single stream of everything your codebase and agents are doing.</div>
-        </div>
-
-        <div class="pulse-panel">
-            <div class="pulse-head">
-                <span class="pulse-label">Signal · last 24h</span>
-                <span class="pulse-count" id="pulseCount">0 events</span>
+        <header class="topbar">
+            <button class="icon-button mobile-menu" id="mobileMenu" type="button" aria-label="Open navigation">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </button>
+            <div class="heading-group">
+                <div class="eyebrow"><span class="eyebrow-rule"></span> Engineering activity</div>
+                <h1 id="pageTitle">Engineering Intelligence</h1>
+                <div class="subtitle" id="pageSubtitle">A live view of reviews, agent activity, and repository health.</div>
             </div>
-            <div class="pulse-bars" id="pulseBars"></div>
-        </div>
-
-        <div class="stats-row" id="statsRow">
-            <div class="stat-chip">
-                <div class="stat-value" id="statTotal">0</div>
-                <div class="stat-label">Total events</div>
+            <div class="top-actions">
+                <span class="date-label" id="currentDate"></span>
+                <select class="select range-select" id="globalRange" aria-label="Dashboard time range">
+                    <option value="24h">24 Hours</option><option value="7d">7 Days</option><option value="30d">30 Days</option><option value="all" selected>All Time</option>
+                </select>
+                <button class="button" id="refreshButton" type="button">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.6-2L20 12M4 12l2.8 5a7 7 0 0 0 11.6-2"/></svg><span class="refresh-label">Refresh</span>
+                </button>
             </div>
-            <div class="stat-chip">
-                <div class="stat-value" id="statToday">0</div>
-                <div class="stat-label">Today</div>
-            </div>
-            <div class="stat-chip">
-                <div class="stat-value" id="statSources">0</div>
-                <div class="stat-label">Active sources</div>
-            </div>
-        </div>
+        </header>
 
-        <div class="filters" id="filters">
-            <button class="filter-btn active" data-source="">All</button>
-        </div>
+        <section class="view active" id="view-overview" data-view="overview">
+            <div class="kpi-grid" id="kpiGrid">
+                <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+                <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+            </div>
+            <div class="analytics-grid">
+                <section class="panel">
+                    <div class="panel-head"><div><h2 class="panel-title">Activity over time</h2><div class="panel-subtitle">Event volume across the selected period</div></div><div class="range-tabs" id="activityRanges"><button class="range-tab" data-range="24h">24H</button><button class="range-tab" data-range="7d">7D</button><button class="range-tab active" data-range="30d">30D</button></div></div>
+                    <div class="panel-body"><div class="chart-box" id="activityChart"></div></div>
+                </section>
+                <section class="panel">
+                    <div class="panel-head"><div><h2 class="panel-title">Issue severity</h2><div class="panel-subtitle">Findings captured in review metadata</div></div></div>
+                    <div class="panel-body"><div class="severity-layout" id="severityChart"></div></div>
+                </section>
+            </div>
+            <div class="lower-grid">
+                <section class="panel">
+                    <div class="panel-head"><div><h2 class="panel-title">Review execution</h2><div class="panel-subtitle">Publication and execution state</div></div></div>
+                    <div class="panel-body"><div class="breakdown" id="executionChart"></div></div>
+                </section>
+                <section class="panel">
+                    <div class="panel-head"><div><h2 class="panel-title">Agent activity</h2><div class="panel-subtitle">Executions by reported event source</div></div><button class="button" data-navigate="agents" type="button">View agents</button></div>
+                    <div class="panel-body"><div class="agent-bars" id="agentChart"></div></div>
+                </section>
+            </div>
+            <section class="timeline-section">
+                <div class="section-heading"><h2>Recent activity</h2><button class="button" data-navigate="timeline" type="button">Full timeline <span aria-hidden="true">→</span></button></div>
+                <div class="event-list" id="overviewEvents"><div class="skeleton"></div><div class="skeleton"></div></div>
+            </section>
+        </section>
 
-        <div id="timeline"></div>
+        <section class="view" id="view-timeline" data-view="timeline">
+            <div class="page-intro"><div><h2>Activity timeline</h2><p>Search and filter every event received by TRAC.</p></div><div class="section-hint" id="timelineRangeLabel"></div></div>
+            <div id="timelineMount"></div>
+        </section>
+
+        <section class="view" id="view-agents" data-view="agents">
+            <div class="page-intro"><div><h2>Agents</h2><p>Execution activity and outcomes reported by agents.</p></div><div class="section-hint" id="agentPageCount"></div></div>
+            <div class="entity-grid" id="agentsGrid"></div>
+        </section>
+        <section class="view" id="view-repositories" data-view="repositories">
+            <div class="page-intro"><div><h2>Repositories</h2><p>Repository activity observed in review events.</p></div><div class="section-hint" id="repoPageCount"></div></div>
+            <div class="entity-grid" id="repositoriesGrid"></div>
+        </section>
+        <section class="view" id="view-people" data-view="people">
+            <div class="page-intro"><div><h2>People</h2><p>Contributors and actors explicitly recorded in events.</p></div><div class="section-hint" id="peoplePageCount"></div></div>
+            <div class="entity-grid" id="peopleGrid"></div>
+        </section>
     </main>
+</div>
+
+<div class="drawer-backdrop" id="drawerBackdrop"></div>
+<aside class="detail-drawer" id="detailDrawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+    <div class="drawer-head"><div><div class="eyebrow"><span class="eyebrow-rule"></span> Event details</div><h2 id="drawerTitle">Activity</h2></div><button class="icon-button" id="closeDrawer" type="button" aria-label="Close details"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+    <div class="drawer-content" id="drawerContent"></div>
+</aside>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
-    const timeline = document.getElementById("timeline");
-    const filtersEl = document.getElementById("filters");
-    const pulseBars = document.getElementById("pulseBars");
-    const pulseCount = document.getElementById("pulseCount");
-    let currentSource = "";
+(() => {
+    "use strict";
 
-    async function fetchEvents(source = "") {
-        const url = source ? `/api/events?source=${encodeURIComponent(source)}&limit=200` : "/api/events?limit=200";
-        const res = await fetch(url);
-        return res.json();
+    const API_URL = "/api/events?limit=200";
+    const POLL_INTERVAL = 5000;
+    const SEVERITIES = ["critical", "high", "medium", "low"];
+    const SEVERITY_COLORS = { critical: "#ff7777", high: "#ffad72", medium: "#f2b84b", low: "#79aaff" };
+    const TITLES = {
+        overview: ["Engineering Intelligence", "A live view of reviews, agent activity, and repository health."],
+        timeline: ["Timeline", "Search, filter, and inspect reported engineering activity."],
+        agents: ["Agents", "Execution activity and outcomes reported by agents."],
+        repositories: ["Repositories", "Repository activity observed in review events."],
+        people: ["People", "Contributors and actors explicitly recorded in events."]
+    };
+    const state = {
+        events: [], range: "all", activityRange: "30d", page: "overview",
+        search: "", agent: "", repo: "", type: "", status: "", sort: "newest",
+        loading: true, error: false, lastSuccess: null, signature: null, toastTimer: null
+    };
+    const $ = (selector, root = document) => root.querySelector(selector);
+    const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+    const iconPaths = {
+        activity: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+        check: '<path d="m5 12 4 4L19 6"/>',
+        fail: '<path d="m18 6-12 12M6 6l12 12"/>',
+        issue: '<path d="M12 9v4m0 4h.01"/><path d="M10.3 3.9 2.6 17.3A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-2.7L13.7 3.9a2 2 0 0 0-3.4 0Z"/>',
+        agent: '<rect x="4" y="7" width="16" height="13" rx="3"/><path d="M9 7V5a3 3 0 0 1 6 0v2M8 13h.01M16 13h.01M9 17h6"/>',
+        repo: '<path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5M8 13h8M8 17h8"/>',
+        clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+        person: '<circle cx="9" cy="8" r="3"/><path d="M3 20v-1a6 6 0 0 1 12 0v1M16 5.5a3 3 0 0 1 0 5.8M18 14a5 5 0 0 1 3 4.6V20"/>',
+        search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
+        github: '<path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 6v-3.9a3.4 3.4 0 0 0-1-2.7c3.3-.4 6.8-1.6 6.8-7A5.4 5.4 0 0 0 19.4 4 5 5 0 0 0 19.3.5S18 .1 15 2.2a13.5 13.5 0 0 0-7 0C5 0 3.7.5 3.7.5A5 5 0 0 0 3.6 4a5.4 5.4 0 0 0-1.4 3.8c0 5.4 3.5 6.6 6.8 7a3.4 3.4 0 0 0-1 2.7V22"/>',
+        arrow: '<path d="M7 17 17 7M7 7h10v10"/>',
+        close: '<path d="m6 6 12 12M18 6 6 18"/>'
+    };
+
+    function icon(name, className = "") {
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("fill", "none");
+        svg.setAttribute("stroke", "currentColor");
+        svg.setAttribute("stroke-width", "1.8");
+        svg.setAttribute("stroke-linecap", "round");
+        svg.setAttribute("stroke-linejoin", "round");
+        if (className) svg.setAttribute("class", className);
+        svg.innerHTML = iconPaths[name] || iconPaths.activity;
+        return svg;
+    }
+
+    function element(tag, className, text) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined && text !== null) node.textContent = text;
+        return node;
+    }
+
+    function formatDate(iso, options = {}) {
+        const date = new Date(iso);
+        return Number.isNaN(date.getTime()) ? "Timestamp unavailable" :
+            new Intl.DateTimeFormat(undefined, options).format(date);
     }
 
     function timeAgo(iso) {
-        const diffMs = Date.now() - new Date(iso).getTime();
-        const mins = Math.floor(diffMs / 60000);
-        if (mins < 1) return "just now";
-        if (mins < 60) return `${mins}m ago`;
-        const hrs = Math.floor(mins / 60);
-        if (hrs < 24) return `${hrs}h ago`;
-        const days = Math.floor(hrs / 24);
-        return `${days}d ago`;
+        const date = new Date(iso);
+        if (Number.isNaN(date.getTime())) return "time unavailable";
+        const minutes = Math.floor((Date.now() - date.getTime()) / 60000);
+        if (minutes < 1) return "just now";
+        if (minutes < 60) return `${minutes}m ago`;
+        if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`;
+        return `${Math.floor(minutes / 1440)}d ago`;
     }
 
-    function dayLabel(iso) {
-        const d = new Date(iso);
-        const today = new Date();
-        const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
-        const sameDay = (a, b) => a.toDateString() === b.toDateString();
-        if (sameDay(d, today)) return "Today";
-        if (sameDay(d, yesterday)) return "Yesterday";
-        return d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
-    }
-
-    function glyphFor(ev) {
-        const sev = (ev.summary || "").toLowerCase();
-        if (sev.includes("critical")) return { cls: "glyph-critical", ch: "!" };
-        if (ev.type?.startsWith("agent.")) return { cls: "glyph-agent", ch: "◆" };
-        if (ev.source === "github" || ev.type?.startsWith("pr.") || ev.type?.startsWith("commit")) return { cls: "glyph-github", ch: "⎇" };
-        if (ev.type?.includes("completed") || ev.type?.includes("merged")) return { cls: "glyph-done", ch: "✓" };
-        return { cls: "glyph-system", ch: "•" };
-    }
-
-    function renderStats(events) {
-        const today = new Date().toDateString();
-        const todayCount = events.filter(e => new Date(e.timestamp).toDateString() === today).length;
-        const sources = new Set(events.map(e => e.source));
-        document.getElementById("statTotal").textContent = events.length;
-        document.getElementById("statToday").textContent = todayCount;
-        document.getElementById("statSources").textContent = sources.size;
-    }
-
-    function renderPulse(events) {
-        const buckets = new Array(24).fill(0);
-        const now = Date.now();
-        events.forEach(e => {
-            const ageHrs = (now - new Date(e.timestamp).getTime()) / 3600000;
-            if (ageHrs >= 0 && ageHrs < 24) {
-                buckets[23 - Math.floor(ageHrs)]++;
+    function issueCounts(event) {
+        const result = Object.fromEntries(SEVERITIES.map(severity => [severity, 0]));
+        const metadata = event.metadata || {};
+        const rawCounts = metadata.issue_counts;
+        if (rawCounts && typeof rawCounts === "object") {
+            for (const [key, value] of Object.entries(rawCounts)) {
+                const normalized = normalizeSeverity(key);
+                if (normalized && Number.isFinite(Number(value))) result[normalized] += Number(value);
             }
-        });
-        const max = Math.max(...buckets, 1);
-        pulseBars.innerHTML = "";
-        buckets.forEach((count, i) => {
-            const bar = document.createElement("div");
-            bar.className = "pulse-bar" + (count === 0 ? " zero" : "");
-            const heightPct = count === 0 ? 6 : Math.max(10, (count / max) * 100);
-            bar.style.height = heightPct + "%";
-            bar.style.animationDelay = (i * 0.015) + "s";
-            bar.title = `${count} event(s)`;
-            pulseBars.appendChild(bar);
-        });
-        pulseCount.textContent = `${events.length} events`;
+            return result;
+        }
+        if (Array.isArray(metadata.findings)) {
+            for (const finding of metadata.findings) {
+                const normalized = normalizeSeverity(finding?.severity);
+                if (normalized) result[normalized] += 1;
+            }
+            return result;
+        }
+        const summary = String(event.summary || "");
+        const aliases = { critical: "critical", high: "high|major", medium: "medium|minor", low: "low|nit" };
+        for (const severity of SEVERITIES) {
+            const match = summary.match(new RegExp(`(?:found\\s+)?(\\d+)\\s+(?:${aliases[severity]})\\b`, "i"));
+            if (match) result[severity] = Number(match[1]);
+        }
+        return result;
     }
 
-    function renderEvents(events) {
-        timeline.innerHTML = "";
-        if (events.length === 0) {
-            timeline.innerHTML = `
-                <div class="empty-state">
-                    <div class="empty-glyph">◇</div>
-                    <div class="empty-title">No signal yet</div>
-                    <div class="empty-sub">Once your agents or repos start reporting, every event will land here in order.</div>
-                </div>`;
+    function normalizeSeverity(value) {
+        const severity = String(value || "").toLowerCase();
+        if (severity === "critical") return "critical";
+        if (severity === "high" || severity === "major") return "high";
+        if (severity === "medium" || severity === "minor") return "medium";
+        if (severity === "low" || severity === "nit") return "low";
+        return null;
+    }
+
+    function eventStatus(event) {
+        const status = String(event.status || event.metadata?.publication_status || "").toLowerCase();
+        if (["fully_completed", "completed", "published"].includes(status)) return "success";
+        if (["failed", "publication_failed", "analysis_failed"].includes(status)) return "failed";
+        if (["pending", "publication_pending", "queued", "in_progress"].includes(status)) return "pending";
+        if (status === "analysis_completed") return "partial";
+        if (event.type === "agent.review_completed") return "success";
+        if (event.type === "agent.review_failed") return "failed";
+        if (event.type?.includes("pending")) return "pending";
+        if (event.type?.startsWith("agent.")) return "partial";
+        return "info";
+    }
+
+    function statusLabel(status) {
+        return ({ success: "Completed", failed: "Failed", pending: "Pending", partial: "Analysis complete", info: "Recorded" })[status] || "Recorded";
+    }
+
+    function selectedEvents(range = state.range) {
+        if (range === "all") return [...state.events];
+        const durations = { "24h": 86400000, "7d": 7 * 86400000, "30d": 30 * 86400000 };
+        const cutoff = Date.now() - durations[range];
+        return state.events.filter(event => {
+            const timestamp = new Date(event.timestamp).getTime();
+            return Number.isFinite(timestamp) && timestamp >= cutoff;
+        });
+    }
+
+    function previousPeriodEvents(range) {
+        const duration = { "24h": 86400000, "7d": 7 * 86400000, "30d": 30 * 86400000 }[range];
+        if (!duration) return null;
+        const end = Date.now() - duration;
+        const start = end - duration;
+        return state.events.filter(event => {
+            const timestamp = new Date(event.timestamp).getTime();
+            return Number.isFinite(timestamp) && timestamp >= start && timestamp < end;
+        });
+    }
+
+    function uniqueValues(events, selector) {
+        return [...new Set(events.map(selector).filter(value => typeof value === "string" && value.trim()))].sort((a, b) => a.localeCompare(b));
+    }
+
+    function sourceIsAgent(event) {
+        return Boolean(event.source) && (event.source.includes("agent") || event.type?.startsWith("agent."));
+    }
+
+    function isReviewEvent(event) {
+        return String(event.type || "").toLowerCase().includes("review") ||
+            /^pr\s*#\d+/i.test(String(event.ref || ""));
+    }
+
+    function countIssues(events) {
+        return events.reduce((sum, event) => {
+            const counts = issueCounts(event);
+            return sum + SEVERITIES.reduce((total, severity) => total + counts[severity], 0);
+        }, 0);
+    }
+
+    function showToast(message) {
+        const toast = $("#toast");
+        toast.textContent = message;
+        toast.classList.add("show");
+        clearTimeout(state.toastTimer);
+        state.toastTimer = setTimeout(() => toast.classList.remove("show"), 4200);
+    }
+
+    function setSystemStatus(connected) {
+        $("#systemLabel").textContent = connected ? "API connected" : "Connection issue";
+        $("#systemDot").style.background = connected ? "var(--green)" : "var(--red)";
+        $("#systemDot").style.boxShadow = connected ? "0 0 0 3px var(--green-soft)" : "0 0 0 3px var(--red-soft)";
+    }
+
+    function updateHeader() {
+        $("#currentDate").textContent = formatDate(Date.now(), { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+        $("#lastUpdated").textContent = state.lastSuccess ? `Updated ${formatDate(state.lastSuccess, { hour: "numeric", minute: "2-digit" })}` : "Waiting for event data";
+        $("#timelineRangeLabel").textContent = state.range === "all" ? "All recorded activity" : `Last ${$("#globalRange").selectedOptions[0].text}`;
+    }
+
+    function trendText(currentValue, oldValue) {
+        if (!oldValue && currentValue === 0) return { text: "No change", kind: "flat" };
+        if (!oldValue) return { text: "New activity", kind: "up" };
+        const change = Math.round(((currentValue - oldValue) / oldValue) * 100);
+        return { text: `${change > 0 ? "+" : ""}${change}% vs prior`, kind: change > 0 ? "up" : change < 0 ? "down" : "flat" };
+    }
+
+    function renderKpis(events) {
+        const previous = previousPeriodEvents(state.range);
+        const successes = events.filter(event => isReviewEvent(event) && eventStatus(event) === "success").length;
+        const failures = events.filter(event => eventStatus(event) === "failed").length;
+        const agents = uniqueValues(events.filter(sourceIsAgent), event => event.source);
+        const repositories = uniqueValues(events, event => event.repo);
+        const currentMetrics = [
+            { label: "Total events", value: events.length, description: "Events in selected period", icon: "activity", kind: "", metric: "total", calc: list => list.length },
+            { label: "Successful reviews", value: successes, description: "Reviews fully completed", icon: "check", kind: "success", metric: "success", calc: list => list.filter(event => isReviewEvent(event) && eventStatus(event) === "success").length },
+            { label: "Failed executions", value: failures, description: "Execution or publish failures", icon: "fail", kind: "failure", metric: "failure", calc: list => list.filter(event => eventStatus(event) === "failed").length },
+            { label: "Issues detected", value: countIssues(events), description: "Findings in recorded reviews", icon: "issue", kind: "issues", metric: "issues", calc: countIssues },
+            { label: "Active agents", value: agents.length, description: "Distinct reporting agents", icon: "agent", kind: "agents", metric: "agents", calc: list => uniqueValues(list.filter(sourceIsAgent), event => event.source).length },
+            { label: "Connected repositories", value: repositories.length, description: "Repositories with activity", icon: "repo", kind: "", metric: "repos", calc: list => uniqueValues(list, event => event.repo).length }
+        ];
+        const grid = $("#kpiGrid");
+        grid.replaceChildren();
+        for (const metric of currentMetrics) {
+            const card = element("article", `kpi-card ${metric.kind}`);
+            const top = element("div", "kpi-top");
+            top.append(element("span", "kpi-label", metric.label));
+            const badge = element("span", "kpi-icon");
+            badge.append(icon(metric.icon));
+            top.append(badge);
+            card.append(top, element("div", "kpi-value", metric.value.toLocaleString()), element("div", "kpi-foot"));
+            const foot = $(".kpi-foot", card);
+            foot.append(element("span", "", metric.description));
+            if (previous) {
+                const trend = previous.length
+                    ? trendText(metric.value, metric.calc(previous))
+                    : { text: "No prior activity", kind: "flat" };
+                foot.append(element("span", `trend ${trend.kind}`, trend.text));
+            }
+            grid.append(card);
+        }
+    }
+
+    function renderActivityChart(events, range = state.activityRange) {
+        const box = $("#activityChart");
+        box.replaceChildren();
+        const config = range === "24h" ? { count: 24, mode: "hour" } : { count: range === "7d" ? 7 : 30, mode: "day" };
+        const buckets = Array(config.count).fill(0);
+        const now = new Date();
+        const start = new Date(now);
+        if (config.mode === "hour") {
+            start.setMinutes(0, 0, 0);
+            start.setHours(start.getHours() - config.count + 1);
+        } else {
+            start.setHours(0, 0, 0, 0);
+            start.setDate(start.getDate() - config.count + 1);
+        }
+        for (const event of events) {
+            const date = new Date(event.timestamp);
+            if (Number.isNaN(date.getTime()) || date < start || date > now) continue;
+            const offset = config.mode === "hour"
+                ? Math.floor((date.getTime() - start.getTime()) / 3600000)
+                : Math.floor((new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime() - new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime()) / 86400000);
+            if (offset >= 0 && offset < buckets.length) buckets[offset]++;
+        }
+        const width = 720, height = 180, pad = { left: 28, right: 12, top: 12, bottom: 24 };
+        const chartWidth = width - pad.left - pad.right, chartHeight = height - pad.top - pad.bottom;
+        const max = Math.max(...buckets, 1);
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+        const defs = document.createElementNS(svg.namespaceURI, "defs");
+        defs.innerHTML = '<linearGradient id="activityFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#f2b84b" stop-opacity=".24"/><stop offset="100%" stop-color="#f2b84b" stop-opacity="0"/></linearGradient>';
+        svg.append(defs);
+        for (let i = 0; i <= 3; i++) {
+            const y = pad.top + chartHeight * i / 3;
+            const line = document.createElementNS(svg.namespaceURI, "line");
+            line.setAttribute("x1", pad.left); line.setAttribute("x2", width - pad.right);
+            line.setAttribute("y1", y); line.setAttribute("y2", y);
+            line.setAttribute("stroke", "#24272e"); line.setAttribute("stroke-dasharray", "3 5");
+            svg.append(line);
+            const label = document.createElementNS(svg.namespaceURI, "text");
+            label.setAttribute("x", 1); label.setAttribute("y", y + 3);
+            label.setAttribute("fill", "#656a76"); label.setAttribute("font-size", "9");
+            label.setAttribute("font-family", "DM Mono, monospace");
+            label.textContent = String(Math.ceil(max * (3 - i) / 3));
+            svg.append(label);
+        }
+        const points = buckets.map((value, index) => {
+            const x = pad.left + chartWidth * index / Math.max(buckets.length - 1, 1);
+            const y = pad.top + chartHeight - (value / max) * chartHeight;
+            return { x, y, value, index };
+        });
+        const area = document.createElementNS(svg.namespaceURI, "path");
+        area.setAttribute("d", `M ${points[0].x} ${pad.top + chartHeight} L ${points.map(point => `${point.x} ${point.y}`).join(" L ")} L ${points.at(-1).x} ${pad.top + chartHeight} Z`);
+        area.setAttribute("fill", "url(#activityFill)");
+        svg.append(area);
+        const path = document.createElementNS(svg.namespaceURI, "path");
+        path.setAttribute("d", points.map((point, index) => `${index ? "L" : "M"} ${point.x} ${point.y}`).join(" "));
+        path.setAttribute("fill", "none"); path.setAttribute("stroke", "#f2b84b"); path.setAttribute("stroke-width", "2");
+        path.setAttribute("stroke-linecap", "round"); path.setAttribute("stroke-linejoin", "round");
+        svg.append(path);
+        for (const point of points) {
+            const circle = document.createElementNS(svg.namespaceURI, "circle");
+            circle.setAttribute("cx", point.x); circle.setAttribute("cy", point.y); circle.setAttribute("r", point.value ? "3.2" : "1.8");
+            circle.setAttribute("fill", point.value ? "#f2b84b" : "#4a4e57");
+            circle.setAttribute("stroke", "#111317"); circle.setAttribute("stroke-width", "1.5");
+            const title = document.createElementNS(svg.namespaceURI, "title");
+            const date = config.mode === "hour" ? new Date(start.getTime() + point.index * 3600000) : new Date(start.getTime() + point.index * 86400000);
+            title.textContent = `${formatDate(date, config.mode === "hour" ? { hour: "numeric", month: "short", day: "numeric" } : { month: "short", day: "numeric" })}: ${point.value} events`;
+            circle.append(title); svg.append(circle);
+        }
+        const labelIndexes = new Set([0, Math.floor((buckets.length - 1) / 3), Math.floor(2 * (buckets.length - 1) / 3), buckets.length - 1]);
+        for (const index of labelIndexes) {
+            const date = config.mode === "hour" ? new Date(start.getTime() + index * 3600000) : new Date(start.getTime() + index * 86400000);
+            const label = document.createElementNS(svg.namespaceURI, "text");
+            label.setAttribute("x", points[index].x); label.setAttribute("y", height - 4);
+            label.setAttribute("fill", "#656a76"); label.setAttribute("font-size", "9");
+            label.setAttribute("text-anchor", index === 0 ? "start" : index === buckets.length - 1 ? "end" : "middle");
+            label.setAttribute("font-family", "DM Mono, monospace");
+            label.textContent = formatDate(date, config.mode === "hour" ? { hour: "numeric" } : { month: "short", day: "numeric" });
+            svg.append(label);
+        }
+        if (!events.length) {
+            const note = element("div", "chart-empty", "No events in this period yet");
+            box.append(note);
+        }
+        box.append(svg);
+    }
+
+    function renderSeverityChart(events) {
+        const mount = $("#severityChart");
+        mount.replaceChildren();
+        const counts = Object.fromEntries(SEVERITIES.map(severity => [severity, 0]));
+        for (const event of events) {
+            const values = issueCounts(event);
+            for (const severity of SEVERITIES) counts[severity] += values[severity];
+        }
+        const total = SEVERITIES.reduce((sum, severity) => sum + counts[severity], 0);
+        const wrap = element("div", "donut-wrap");
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 120 120");
+        const circumference = 2 * Math.PI * 43;
+        const base = document.createElementNS(svg.namespaceURI, "circle");
+        base.setAttribute("cx", "60"); base.setAttribute("cy", "60"); base.setAttribute("r", "43");
+        base.setAttribute("fill", "none"); base.setAttribute("stroke", "#262930"); base.setAttribute("stroke-width", "11");
+        svg.append(base);
+        let offset = 0;
+        if (total) {
+            for (const severity of SEVERITIES) {
+                if (!counts[severity]) continue;
+                const circle = document.createElementNS(svg.namespaceURI, "circle");
+                const length = circumference * counts[severity] / total;
+                circle.setAttribute("cx", "60"); circle.setAttribute("cy", "60"); circle.setAttribute("r", "43");
+                circle.setAttribute("fill", "none"); circle.setAttribute("stroke", SEVERITY_COLORS[severity]);
+                circle.setAttribute("stroke-width", "11"); circle.setAttribute("stroke-dasharray", `${length} ${circumference - length}`);
+                circle.setAttribute("stroke-dashoffset", String(-offset)); circle.setAttribute("stroke-linecap", "butt");
+                const title = document.createElementNS(svg.namespaceURI, "title");
+                title.textContent = `${severity}: ${counts[severity]}`;
+                circle.append(title); svg.append(circle); offset += length;
+            }
+        }
+        wrap.append(svg);
+        const center = element("div", "donut-total");
+        center.append(element("strong", "", total.toLocaleString()), element("span", "", "ISSUES"));
+        wrap.append(center);
+        mount.append(wrap);
+        const legend = element("div", "legend");
+        for (const severity of SEVERITIES) {
+            const row = element("div", "legend-item");
+            const dot = element("span", "legend-dot"); dot.style.background = SEVERITY_COLORS[severity];
+            row.append(dot, element("span", "", severity[0].toUpperCase() + severity.slice(1)), element("strong", "legend-value", counts[severity].toLocaleString()));
+            legend.append(row);
+        }
+        mount.append(legend);
+    }
+
+    function renderExecutionChart(events) {
+        const mount = $("#executionChart");
+        mount.replaceChildren();
+        const counts = {
+            success: events.filter(event => isReviewEvent(event) && eventStatus(event) === "success").length,
+            failed: events.filter(event => eventStatus(event) === "failed").length,
+            pending: events.filter(event => eventStatus(event) === "pending").length,
+            partial: events.filter(event => eventStatus(event) === "partial").length
+        };
+        const max = Math.max(...Object.values(counts), 1);
+        const definitions = [
+            ["Completed", counts.success, "var(--green)"],
+            ["Failed", counts.failed, "var(--red)"],
+            ["Pending", counts.pending, "var(--amber)"],
+            ["Analysis complete", counts.partial, "var(--blue)"]
+        ];
+        for (const [label, count, color] of definitions) {
+            const row = element("div", "break-row");
+            row.append(element("span", "", label));
+            const track = element("div", "break-track");
+            const fill = element("div", "break-fill"); fill.style.width = `${count / max * 100}%`; fill.style.background = color;
+            track.append(fill); row.append(track, element("span", "break-count", String(count)));
+            mount.append(row);
+        }
+    }
+
+    function renderAgentChart(events) {
+        const mount = $("#agentChart");
+        mount.replaceChildren();
+        const totals = new Map();
+        for (const event of events.filter(sourceIsAgent)) {
+            totals.set(event.source, (totals.get(event.source) || 0) + 1);
+        }
+        const values = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+        if (!values.length) {
+            mount.append(element("div", "chart-empty", "Agent activity will appear when agents report events."));
             return;
         }
-
-        let lastDay = null;
-        let dayContainer = null;
-
-        for (const ev of events) {
-            const label = dayLabel(ev.timestamp);
-            if (label !== lastDay) {
-                lastDay = label;
-                const group = document.createElement("div");
-                group.className = "day-group";
-                group.innerHTML = `<div class="day-header">${label}</div>`;
-                dayContainer = document.createElement("div");
-                group.appendChild(dayContainer);
-                timeline.appendChild(group);
-            }
-
-            const g = glyphFor(ev);
-            const card = document.createElement("div");
-            card.className = "event-card";
-            card.innerHTML = `
-                <div class="event-glyph ${g.cls}">${g.ch}</div>
-                <div class="event-main">
-                    <div class="event-summary">${ev.summary}</div>
-                    <span class="tag">${ev.source}</span>
-                    <span class="tag">${ev.type}</span>
-                    ${ev.repo ? `<span class="tag">${ev.repo}</span>` : ""}
-                </div>
-                <div class="event-meta">
-                    ${ev.actor ? `<div class="event-actor">${ev.actor}</div>` : ""}
-                    <div class="event-time">${timeAgo(ev.timestamp)}</div>
-                </div>
-            `;
-            dayContainer.appendChild(card);
+        const max = Math.max(...values.map(([, count]) => count), 1);
+        for (const [name, count] of values) {
+            const row = element("div", "agent-row");
+            row.append(element("span", "agent-name", name));
+            const track = element("div", "agent-track");
+            const fill = element("div", "agent-fill"); fill.style.width = `${count / max * 100}%`;
+            track.append(fill); row.append(track, element("span", "agent-count", String(count)));
+            mount.append(row);
         }
     }
 
-    function renderFilters(sources) {
-        filtersEl.innerHTML = `<button class="filter-btn active" data-source="">All</button>`;
-        for (const src of sources) {
-            const btn = document.createElement("button");
-            btn.className = "filter-btn";
-            btn.dataset.source = src;
-            btn.textContent = src;
-            filtersEl.appendChild(btn);
+    function statusForEvent(event) {
+        return eventStatus(event);
+    }
+
+    function eventTitle(event) {
+        if (event.summary) return event.summary;
+        return String(event.type || "Activity").replaceAll(".", " ").replaceAll("_", " ");
+    }
+
+    function eventCard(event) {
+        const status = statusForEvent(event);
+        const card = element("button", `event-card status-${status}`);
+        card.type = "button";
+        card.setAttribute("aria-label", `View event: ${eventTitle(event)}`);
+        const symbol = element("span", "event-symbol");
+        symbol.append(icon(status === "success" ? "check" : status === "failed" ? "fail" : status === "pending" ? "clock" : "activity"));
+        const content = element("span", "event-content");
+        const titleRow = element("span", "event-title-row");
+        titleRow.append(element("span", "event-title", eventTitle(event)));
+        titleRow.append(element("span", `pill ${status}`, statusLabel(status)));
+        content.append(titleRow);
+        const meta = element("span", "event-meta-line");
+        if (event.repo) {
+            const repo = element("span", ""); repo.append(icon("repo"), document.createTextNode(event.repo)); meta.append(repo);
         }
-        filtersEl.querySelectorAll(".filter-btn").forEach(btn => {
-            btn.addEventListener("click", async () => {
-                filtersEl.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
-                btn.classList.add("active");
-                currentSource = btn.dataset.source;
-                const events = await fetchEvents(currentSource);
-                renderEvents(events);
+        if (event.ref) {
+            const ref = element("span", ""); ref.append(icon("github"), document.createTextNode(event.ref)); meta.append(ref);
+        }
+        if (event.source) {
+            const source = element("span", ""); source.append(icon("agent"), document.createTextNode(event.source)); meta.append(source);
+        }
+        const date = element("span", ""); date.append(icon("clock"), document.createTextNode(`${timeAgo(event.timestamp)} · ${formatDate(event.timestamp, { hour: "numeric", minute: "2-digit" })}`)); meta.append(date);
+        content.append(meta);
+        card.append(symbol, content);
+        const counts = issueCounts(event);
+        const severityList = element("span", "event-severities");
+        let hasCounts = false;
+        for (const severity of SEVERITIES) {
+            if (!counts[severity]) continue;
+            hasCounts = true;
+            severityList.append(element("span", `severity-chip ${severity}`, `${severity[0].toUpperCase()} ${counts[severity]}`));
+        }
+        if (!hasCounts && Array.isArray(event.metadata?.findings)) severityList.append(element("span", "severity-chip", "0 issues"));
+        card.append(severityList);
+        card.addEventListener("click", () => openEventDetails(event));
+        return card;
+    }
+
+    function renderEventList(mount, events, limit = Infinity) {
+        mount.replaceChildren();
+        const items = events.slice(0, limit);
+        if (!items.length) {
+            const empty = element("div", "empty-state");
+            empty.append(element("strong", "", state.error ? "Activity unavailable" : "No events match"), element("span", "", state.error ? "The event service could not be reached. Retry to restore live activity." : "Try widening the time range or changing your search and filters."));
+            mount.append(empty);
+            return;
+        }
+        for (const event of items) mount.append(eventCard(event));
+    }
+
+    function buildFilterSelect(id, label, values, selected, allLabel) {
+        const select = element("select", "select filter-select");
+        select.id = id;
+        select.setAttribute("aria-label", label);
+        const all = element("option", "", allLabel);
+        all.value = "";
+        select.append(all);
+        for (const value of values) {
+            const option = element("option", "", value);
+            option.value = value;
+            select.append(option);
+        }
+        select.value = selected;
+        return select;
+    }
+
+    function timelineFilters(events) {
+        const toolbar = element("div", "toolbar");
+        const searchWrap = element("label", "input-wrap");
+        searchWrap.setAttribute("aria-label", "Search events");
+        searchWrap.append(icon("search"));
+        const search = element("input", "input");
+        search.type = "search"; search.placeholder = "Search events, PRs, findings…"; search.value = state.search;
+        search.setAttribute("aria-label", "Search events");
+        search.addEventListener("input", () => { state.search = search.value; renderTimeline(events); });
+        searchWrap.append(search);
+        toolbar.append(searchWrap);
+        const agents = uniqueValues(events, event => event.source);
+        const repos = uniqueValues(events, event => event.repo);
+        const types = uniqueValues(events, event => event.type);
+        const selects = [
+            ["filterAgent", "Filter by agent/source", agents, state.agent, "All agents"],
+            ["filterRepo", "Filter by repository", repos, state.repo, "All repositories"],
+            ["filterType", "Filter by event type", types, state.type, "All event types"],
+            ["filterStatus", "Filter by execution status", ["success", "failed", "partial", "pending", "info"], state.status, "All statuses"],
+            ["filterSort", "Sort timeline", ["newest", "oldest"], state.sort, "Newest first"]
+        ];
+        for (const [id, label, options, value, allLabel] of selects) {
+            const select = buildFilterSelect(id, label, options, value, allLabel);
+            if (id === "filterSort") {
+                select.innerHTML = "";
+                for (const [optionValue, text] of [["newest", "Newest first"], ["oldest", "Oldest first"]]) {
+                    const option = element("option", "", text); option.value = optionValue; select.append(option);
+                }
+                select.value = state.sort;
+            }
+            select.addEventListener("change", () => {
+                if (id === "filterAgent") state.agent = select.value;
+                if (id === "filterRepo") state.repo = select.value;
+                if (id === "filterType") state.type = select.value;
+                if (id === "filterStatus") state.status = select.value;
+                if (id === "filterSort") state.sort = select.value;
+                renderTimeline(events);
             });
+            toolbar.append(select);
+        }
+        const count = element("span", "toolbar-count");
+        const wrap = element("div", "");
+        wrap.append(toolbar);
+        const result = element("div", "event-list");
+        result.dataset.role = "timeline-results";
+        toolbar.append(count);
+        wrap.append(result);
+        $("#timelineMount").replaceChildren(wrap);
+        renderTimeline(events);
+    }
+
+    function filteredTimelineEvents(events) {
+        const query = state.search.trim().toLowerCase();
+        return events.filter(event => {
+            if (state.agent && event.source !== state.agent) return false;
+            if (state.repo && event.repo !== state.repo) return false;
+            if (state.type && event.type !== state.type) return false;
+            if (state.status && eventStatus(event) !== state.status) return false;
+            if (query) {
+                const haystack = [
+                    event.summary, event.type, event.source, event.repo, event.ref, event.actor,
+                    JSON.stringify(event.metadata || {})
+                ].join(" ").toLowerCase();
+                if (!haystack.includes(query)) return false;
+            }
+            return true;
+        }).sort((a, b) => {
+            const order = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+            return state.sort === "oldest" ? order : -order;
         });
     }
 
-    async function refresh() {
-        const allEvents = await fetchEvents();
-        const uniqueSources = [...new Set(allEvents.map(e => e.source))];
-        renderFilters(uniqueSources);
-        renderStats(allEvents);
-        renderPulse(allEvents);
-        const filtered = currentSource ? allEvents.filter(e => e.source === currentSource) : allEvents;
-        renderEvents(filtered);
+    function renderTimeline(events = selectedEvents()) {
+        const mount = $('[data-role="timeline-results"]');
+        if (!mount) return;
+        const filtered = filteredTimelineEvents(events);
+        renderEventList(mount, filtered);
+        const count = $(".toolbar-count", $("#timelineMount"));
+        if (count) count.textContent = `${filtered.length} events`;
     }
 
+    function renderEntities(events) {
+        const agentMap = new Map();
+        const repoMap = new Map();
+        const peopleMap = new Map();
+        for (const event of events) {
+            const status = eventStatus(event);
+            const counts = issueCounts(event);
+            const issues = SEVERITIES.reduce((total, severity) => total + counts[severity], 0);
+            if (sourceIsAgent(event)) {
+                const item = agentMap.get(event.source) || { name: event.source, executions: 0, success: 0, failed: 0, issues: 0, last: null, events: [] };
+                item.executions++; item.success += status === "success" ? 1 : 0; item.failed += status === "failed" ? 1 : 0; item.issues += issues;
+                if (!item.last || new Date(event.timestamp) > new Date(item.last)) item.last = event.timestamp;
+                item.events.push(event); agentMap.set(event.source, item);
+            }
+            if (event.repo) {
+                const item = repoMap.get(event.repo) || { name: event.repo, reviews: 0, success: 0, failed: 0, issues: 0, last: null, events: [] };
+                item.reviews += event.type?.includes("review") ? 1 : 0; item.success += status === "success" ? 1 : 0; item.failed += status === "failed" ? 1 : 0; item.issues += issues;
+                if (!item.last || new Date(event.timestamp) > new Date(item.last)) item.last = event.timestamp;
+                item.events.push(event); repoMap.set(event.repo, item);
+            }
+            if (event.actor) {
+                const item = peopleMap.get(event.actor) || { name: event.actor, activity: 0, reviews: 0, issues: 0, last: null, repos: new Set(), agents: new Set(), events: [] };
+                item.activity++; item.reviews += event.type?.includes("review") ? 1 : 0; item.issues += issues;
+                if (event.repo) item.repos.add(event.repo);
+                if (sourceIsAgent(event)) item.agents.add(event.source);
+                if (!item.last || new Date(event.timestamp) > new Date(item.last)) item.last = event.timestamp;
+                item.events.push(event); peopleMap.set(event.actor, item);
+            }
+        }
+        const agents = [...agentMap.values()].sort((a, b) => b.executions - a.executions);
+        const repos = [...repoMap.values()].sort((a, b) => b.reviews - a.reviews);
+        const people = [...peopleMap.values()].sort((a, b) => b.activity - a.activity);
+        $("#navTimelineCount").textContent = String(events.length);
+        $("#navAgentCount").textContent = String(agents.length);
+        $("#navRepoCount").textContent = String(repos.length);
+        $("#navPeopleCount").textContent = String(people.length);
+        $("#agentPageCount").textContent = `${agents.length} observed`;
+        $("#repoPageCount").textContent = `${repos.length} observed`;
+        $("#peoplePageCount").textContent = `${people.length} observed`;
+        renderEntityCards($("#agentsGrid"), agents, "agent");
+        renderEntityCards($("#repositoriesGrid"), repos, "repository");
+        renderEntityCards($("#peopleGrid"), people, "person");
+    }
+
+    function renderEntityCards(mount, entities, type) {
+        mount.replaceChildren();
+        if (!entities.length) {
+            const empty = element("div", "empty-state");
+            empty.append(element("strong", "", `No ${type} data yet`), element("span", "", `This view is populated from ${type === "person" ? "event actors" : type === "agent" ? "event sources" : "repository fields"} returned by the event API.`));
+            mount.append(empty);
+            return;
+        }
+        for (const item of entities) {
+            const card = element("article", "entity-card");
+            const top = element("div", "entity-top");
+            const titleBlock = element("div", "");
+            titleBlock.append(element("h3", "entity-title", item.name));
+            titleBlock.append(element("div", "entity-sub", type === "agent" ? "Reported agent source" : type === "repository" ? (item.name.includes("/") ? `Owner: ${item.name.split("/")[0]}` : "Owner not provided by events") : "Recorded event actor"));
+            const isActive = item.last && Date.now() - new Date(item.last).getTime() < 86400000;
+            top.append(titleBlock, element("span", `pill ${type === "agent" && isActive ? "success" : ""}`, type === "agent" ? (isActive ? "Active · 24h" : "Inactive") : type === "repository" ? "Observed" : "Contributor"));
+            card.append(top);
+            const stats = element("div", "entity-stats");
+            const values = type === "agent"
+                ? [["Executions", item.executions], ["Success", item.success], ["Failed", item.failed]]
+                : type === "repository"
+                    ? [["Reviews", item.reviews], ["Issues", item.issues], ["Failed", item.failed]]
+                    : [["Activity", item.activity], ["Reviews", item.reviews], ["Issues", item.issues]];
+            for (const [label, value] of values) {
+                const stat = element("div", "entity-stat");
+                stat.append(element("strong", "", String(value)), element("span", "", label)); stats.append(stat);
+            }
+            card.append(stats);
+            card.append(element("div", "entity-last", item.last ? `Last active ${formatDate(item.last, { dateStyle: "medium", timeStyle: "short" })}` : "Last activity unavailable"));
+            if (type === "person") {
+                const associations = element("div", "entity-last", [
+                    item.repos.size ? `Repositories: ${[...item.repos].join(", ")}` : "",
+                    item.agents.size ? `Agents: ${[...item.agents].join(", ")}` : ""
+                ].filter(Boolean).join(" · ") || "No repository or agent association recorded");
+                card.append(associations);
+            }
+            const action = element("button", "entity-action", "View activity →");
+            action.type = "button";
+            action.addEventListener("click", () => {
+                state.search = item.name;
+                state.agent = ""; state.repo = ""; state.type = ""; state.status = ""; state.sort = "newest";
+                navigate("timeline");
+            });
+            card.append(action);
+            mount.append(card);
+        }
+    }
+
+    function appendDetailField(grid, label, value) {
+        if (value === undefined || value === null || value === "") return;
+        const field = element("div", "detail-field");
+        field.append(element("span", "", label), element("strong", "", String(value)));
+        grid.append(field);
+    }
+
+    function openEventDetails(event) {
+        const content = $("#drawerContent");
+        content.replaceChildren();
+        const status = eventStatus(event);
+        const header = element("div", "detail-group");
+        const pill = element("span", `pill ${status}`, statusLabel(status));
+        header.append(pill);
+        content.append(header);
+        const details = element("div", "detail-group");
+        details.append(element("div", "detail-label", "Execution"));
+        const grid = element("div", "detail-grid");
+        appendDetailField(grid, "Event type", event.type);
+        appendDetailField(grid, "Status", event.status || statusLabel(status));
+        appendDetailField(grid, "Agent / source", event.source);
+        appendDetailField(grid, "Actor", event.actor);
+        appendDetailField(grid, "Repository", event.repo);
+        appendDetailField(grid, "Pull request", event.ref);
+        appendDetailField(grid, "Timestamp", formatDate(event.timestamp, { dateStyle: "full", timeStyle: "long" }));
+        appendDetailField(grid, "Execution ID", event.execution_id);
+        details.append(grid); content.append(details);
+        const summary = element("div", "detail-group");
+        summary.append(element("div", "detail-label", "Review summary"), element("div", "finding-comment", event.summary || "No summary was provided."));
+        content.append(summary);
+        const counts = issueCounts(event);
+        const severityGrid = element("div", "detail-group");
+        severityGrid.append(element("div", "detail-label", "Issue distribution"));
+        const countGrid = element("div", "detail-grid");
+        for (const severity of SEVERITIES) appendDetailField(countGrid, severity[0].toUpperCase() + severity.slice(1), counts[severity]);
+        severityGrid.append(countGrid); content.append(severityGrid);
+        const findings = event.metadata?.findings;
+        if (Array.isArray(findings)) {
+            const findingGroup = element("div", "detail-group");
+            findingGroup.append(element("div", "detail-label", `AI findings · ${findings.length}`));
+            if (findings.length) {
+                const list = element("div", "finding-list");
+                for (const finding of findings) {
+                    const item = element("article", "finding");
+                    const head = element("div", "finding-head");
+                    head.append(element("span", `severity-chip ${normalizeSeverity(finding.severity) || ""}`, String(finding.severity || "Issue")));
+                    const location = [finding.file, finding.line ? `line ${finding.line}` : ""].filter(Boolean).join(" · ");
+                    if (location) head.append(element("span", "finding-path", location));
+                    item.append(head, element("div", "finding-comment", finding.comment || "Comment unavailable."));
+                    if (finding.suggestion) item.append(element("div", "finding-comment", `Suggestion: ${finding.suggestion}`));
+                    list.append(item);
+                }
+                findingGroup.append(list);
+            } else findingGroup.append(element("div", "section-hint", "No findings were recorded for this analysis."));
+            content.append(findingGroup);
+        }
+        const publication = event.metadata?.publication_status || (event.metadata?.github_posted === true ? "published" : event.metadata?.github_posted === false ? "not published" : "not recorded");
+        const publicationGroup = element("div", "detail-group");
+        publicationGroup.append(element("div", "detail-label", "GitHub publication"));
+        const publicationGrid = element("div", "detail-grid");
+        appendDetailField(publicationGrid, "Publication status", publication);
+        appendDetailField(publicationGrid, "Review posted", event.metadata?.github_posted === undefined ? "Not recorded" : event.metadata.github_posted ? "Yes" : "No");
+        publicationGroup.append(publicationGrid);
+        const error = event.metadata?.github_error;
+        if (error) {
+            const errorGrid = element("div", "detail-grid");
+            appendDetailField(errorGrid, "HTTP status", error.status);
+            appendDetailField(errorGrid, "Endpoint", error.endpoint);
+            appendDetailField(errorGrid, "Stage", error.stage);
+            appendDetailField(errorGrid, "GitHub message", error.message);
+            appendDetailField(errorGrid, "Accepted permissions", error.accepted_permissions);
+            publicationGroup.append(errorGrid);
+        }
+        content.append(publicationGroup);
+        const candidateUrl = event.metadata?.github_url || (event.repo?.includes("/") && event.ref?.match(/#(\d+)/) ? `https://github.com/${event.repo}/pull/${event.ref.match(/#(\d+)/)[1]}` : null);
+        let githubUrl = null;
+        if (candidateUrl) {
+            try {
+                const url = new URL(candidateUrl);
+                if (url.protocol === "https:" && url.hostname === "github.com") githubUrl = url.href;
+            } catch { /* Invalid or unavailable event link. */ }
+        }
+        if (githubUrl) {
+            const link = document.createElement("a");
+            link.className = "detail-link"; link.href = githubUrl; link.target = "_blank"; link.rel = "noopener noreferrer";
+            link.append(icon("arrow"), document.createTextNode("Open pull request on GitHub"));
+            content.append(link);
+        }
+        $("#drawerTitle").textContent = eventTitle(event);
+        $("#detailDrawer").classList.add("open");
+        $("#drawerBackdrop").classList.add("open");
+        $("#closeDrawer").focus();
+    }
+
+    function closeDrawer() {
+        $("#detailDrawer").classList.remove("open");
+        $("#drawerBackdrop").classList.remove("open");
+    }
+
+    function navigate(page) {
+        if (!TITLES[page]) return;
+        state.page = page;
+        for (const view of $$(".view")) view.classList.toggle("active", view.dataset.view === page);
+        for (const button of $$(".nav-item")) button.classList.toggle("active", button.dataset.page === page);
+        $("#pageTitle").textContent = TITLES[page][0];
+        $("#pageSubtitle").textContent = TITLES[page][1];
+        $("#sidebar").classList.remove("mobile-open");
+        if (page === "timeline") mountTimeline();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function mountTimeline() {
+        const events = selectedEvents();
+        $("#timelineRangeLabel").textContent = state.range === "all" ? "All recorded activity" : `Last ${$("#globalRange").selectedOptions[0].text}`;
+        timelineFilters(events);
+    }
+
+    function renderDashboard() {
+        const events = selectedEvents();
+        renderKpis(events);
+        renderActivityChart(selectedEvents(state.activityRange), state.activityRange);
+        renderSeverityChart(events);
+        renderExecutionChart(events);
+        renderAgentChart(events);
+        renderEntities(events);
+        renderEventList($("#overviewEvents"), [...events].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)), 5);
+        if (state.page === "timeline") mountTimeline();
+        updateHeader();
+    }
+
+    async function refresh(showNotice = false) {
+        const button = $("#refreshButton");
+        button.classList.add("refreshing");
+        const wasError = state.error;
+        try {
+            const response = await fetch(API_URL, { cache: "no-store" });
+            if (!response.ok) throw new Error(`Event API returned ${response.status}`);
+            const payload = await response.json();
+            if (!Array.isArray(payload)) throw new Error("Event API returned an invalid response");
+            const signature = JSON.stringify(payload);
+            const changed = signature !== state.signature;
+            state.events = payload;
+            state.signature = signature;
+            state.error = false;
+            state.loading = false;
+            state.lastSuccess = Date.now();
+            setSystemStatus(true);
+            if (changed) renderDashboard();
+            else updateHeader();
+            if (wasError && !showNotice) showToast("Connection restored");
+            if (showNotice) showToast("Dashboard data refreshed");
+        } catch (error) {
+            const wasAlreadyError = state.error;
+            state.error = true;
+            state.loading = false;
+            setSystemStatus(false);
+            if (!state.events.length) {
+                renderEventList($("#overviewEvents"), []);
+                $("#kpiGrid").replaceChildren(element("div", "error-state", "Event service unavailable"));
+            }
+            if (showNotice || !wasAlreadyError) {
+                showToast(error instanceof Error ? error.message : "Could not load dashboard data");
+            }
+        } finally {
+            button.classList.remove("refreshing");
+        }
+    }
+
+    function bind() {
+        $("#navigation").addEventListener("click", event => {
+            const button = event.target.closest("[data-page]");
+            if (button) navigate(button.dataset.page);
+        });
+        document.addEventListener("click", event => {
+            const button = event.target.closest("[data-navigate]");
+            if (button) navigate(button.dataset.navigate);
+        });
+        $("#globalRange").addEventListener("change", event => {
+            state.range = event.target.value;
+            renderDashboard();
+        });
+        $("#activityRanges").addEventListener("click", event => {
+            const button = event.target.closest("[data-range]");
+            if (!button) return;
+            state.activityRange = button.dataset.range;
+            $$(".range-tab", $("#activityRanges")).forEach(tab => tab.classList.toggle("active", tab === button));
+            renderActivityChart(selectedEvents(state.activityRange), state.activityRange);
+        });
+        $("#refreshButton").addEventListener("click", () => refresh(true));
+        $("#mobileMenu").addEventListener("click", () => $("#sidebar").classList.toggle("mobile-open"));
+        $("#closeDrawer").addEventListener("click", closeDrawer);
+        $("#drawerBackdrop").addEventListener("click", closeDrawer);
+        document.addEventListener("keydown", event => {
+            if (event.key === "Escape") {
+                closeDrawer();
+                $("#sidebar").classList.remove("mobile-open");
+            }
+        });
+    }
+
+    bind();
+    updateHeader();
     refresh();
-    setInterval(refresh, 5000);
+    setInterval(() => refresh(), POLL_INTERVAL);
+})();
 </script>
 </body>
 </html>

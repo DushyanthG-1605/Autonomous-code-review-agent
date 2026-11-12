@@ -1,3 +1,4 @@
+import json
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -23,19 +24,55 @@ def on_startup():
 def create_event(event: EventCreate):
     conn = get_connection()
     timestamp = now_iso()
+    metadata_json = json.dumps(event.metadata)
 
-    cursor = conn.execute(
-        """
-        INSERT INTO events (type, source, summary, repo, ref, actor, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (event.type, event.source, event.summary, event.repo, event.ref, event.actor, timestamp),
+    values = (
+        event.type, event.source, event.summary, event.repo, event.ref, event.actor,
+        timestamp, event.execution_id, event.status, metadata_json,
     )
+    if event.execution_id:
+        conn.execute(
+            """
+            INSERT INTO events
+                (type, source, summary, repo, ref, actor, timestamp, execution_id, status, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(execution_id) WHERE execution_id IS NOT NULL DO UPDATE SET
+                type = excluded.type,
+                source = excluded.source,
+                summary = excluded.summary,
+                repo = excluded.repo,
+                ref = excluded.ref,
+                actor = excluded.actor,
+                status = excluded.status,
+                metadata = excluded.metadata
+            """,
+            values,
+        )
+        row = conn.execute(
+            "SELECT * FROM events WHERE execution_id = ?", (event.execution_id,)
+        ).fetchone()
+    else:
+        cursor = conn.execute(
+            """
+            INSERT INTO events
+                (type, source, summary, repo, ref, actor, timestamp, execution_id, status, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+        row = conn.execute(
+            "SELECT * FROM events WHERE id = ?", (cursor.lastrowid,)
+        ).fetchone()
     conn.commit()
-    new_id = cursor.lastrowid
     conn.close()
 
-    return Event(id=new_id, timestamp=timestamp, **event.model_dump())
+    return _event_response(row)
+
+
+def _event_response(row):
+    event = dict(row)
+    event["metadata"] = json.loads(event["metadata"] or "{}")
+    return event
 
 
 # ---------- List events (powers the timeline) ----------
@@ -56,7 +93,7 @@ def list_events(source: Optional[str] = None, limit: int = 100):
         ).fetchall()
 
     conn.close()
-    return [dict(row) for row in rows]
+    return [_event_response(row) for row in rows]
 
 
 # ---------- Get a single event ----------
@@ -69,7 +106,7 @@ def get_event(event_id: int):
 
     if row is None:
         raise HTTPException(status_code=404, detail="Event not found")
-    return dict(row)
+    return _event_response(row)
 
 
 # ---------- Serve the dashboard ----------

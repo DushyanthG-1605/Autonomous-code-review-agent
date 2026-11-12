@@ -15,7 +15,10 @@ def report_to_trac(
     repo: str | None = None,
     ref: str | None = None,
     actor: str | None = None,
-) -> None:
+    execution_id: str | None = None,
+    status: str | None = None,
+    metadata: dict | None = None,
+) -> dict:
     try:
         response = requests.post(
             TRAC_EVENTS_URL,
@@ -26,10 +29,21 @@ def report_to_trac(
                 "repo": repo,
                 "ref": ref,
                 "actor": actor,
+                "execution_id": execution_id,
+                "status": status,
+                "metadata": metadata or {},
             },
             timeout=3,
         )
         response.raise_for_status()
-    except Exception as exc:
-        # Reporting must never break a review, but failures should be visible.
-        logger.warning("Could not report event to TRAC at %s: %s", TRAC_EVENTS_URL, exc)
+        return response.json()
+    except requests.RequestException as exc:
+        logger.error(
+            "Could not persist review event to TRAC at %s (%s)",
+            TRAC_EVENTS_URL,
+            type(exc).__name__,
+        )
+        raise RuntimeError("Could not persist review event to TRAC") from exc
+    except ValueError as exc:
+        logger.error("TRAC returned an invalid event response (%s)", type(exc).__name__)
+        raise RuntimeError("Could not persist review event to TRAC") from exc

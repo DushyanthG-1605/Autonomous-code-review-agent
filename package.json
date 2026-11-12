@@ -1,0 +1,13 @@
+{
+  "name": "autonomous-code-review-agent",
+  "private": true,
+  "scripts": {
+    "dev": "node -e \"console.log('[TRAC] Starting application...')\" && concurrently --kill-others --names FRONTEND,BACKEND --prefix \"[{name}]\" --prefix-colors cyan,yellow \"pnpm:frontend\" \"pnpm:backend\"",
+    "frontend": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "backend": ".\\venv\\Scripts\\python.exe -m uvicorn trac.main:app --host 127.0.0.1 --port 8000 --reload"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "vite": "^7.2.2"
+  }
+}

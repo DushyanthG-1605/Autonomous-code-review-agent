@@ -24,6 +24,17 @@ def init_db():
             timestamp TEXT NOT NULL
         )
     """)
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(events)")}
+    if "execution_id" not in columns:
+        conn.execute("ALTER TABLE events ADD COLUMN execution_id TEXT")
+    if "status" not in columns:
+        conn.execute("ALTER TABLE events ADD COLUMN status TEXT")
+    if "metadata" not in columns:
+        conn.execute("ALTER TABLE events ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_execution_id "
+        "ON events (execution_id) WHERE execution_id IS NOT NULL"
+    )
     conn.commit()
     conn.close()
 

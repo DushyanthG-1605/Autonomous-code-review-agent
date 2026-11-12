@@ -13,6 +13,7 @@ class ReviewState(TypedDict):
     # Inputs
     repo_full_name: str          # e.g. "DushyanthG-1605/Autonomous-code-review-agent"
     pr_number: int
+    execution_id: str
 
     # Populated by fetch_diff
     pr_files: List[Dict[str, Any]]      # filename, patch, status, raw content
