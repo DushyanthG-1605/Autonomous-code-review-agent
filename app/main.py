@@ -7,6 +7,7 @@ load_dotenv()
 
 from agent.graph import review_app
 from agent.state import ReviewState
+from tools.git_tools import cleanup_temp_dirs
 
 
 def run_review(repo_full_name: str, pr_number: int) -> None:
@@ -14,9 +15,12 @@ def run_review(repo_full_name: str, pr_number: int) -> None:
         "repo_full_name": repo_full_name,
         "pr_number": pr_number,
         "pr_files": [],
+        "pr_author": "",
+        "repo_local_path": "",
         "retrieved_context": {},
         "lint_findings": [],
         "review_comments": [],
+        "review_notes": [],
         "prioritized_comments": [],
         "has_critical": False,
         "final_summary": "",
@@ -25,7 +29,10 @@ def run_review(repo_full_name: str, pr_number: int) -> None:
 
     print(f"Starting review for {repo_full_name}#{pr_number}...\n")
 
-    final_state = review_app.invoke(initial_state)
+    try:
+        final_state = review_app.invoke(initial_state)
+    finally:
+        cleanup_temp_dirs()   # always remove temp checkouts, even if the review fails
 
     print("\n--- Review Complete ---")
     print(final_state["final_summary"])

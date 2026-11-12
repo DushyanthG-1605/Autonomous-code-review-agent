@@ -32,6 +32,13 @@ def fetch_pr_files(repo_full_name: str, pr_number: int) -> List[Dict[str, Any]]:
     return files
 
 
+def fetch_pr_author(repo_full_name: str, pr_number: int) -> str:
+    """Return the GitHub login of the user who opened the PR."""
+    gh = get_github_client()
+    pr = gh.get_repo(repo_full_name).get_pull(pr_number)
+    return pr.user.login if pr.user else "unknown"
+
+
 def fetch_file_content(repo_full_name: str, filepath: str, ref: str) -> str:
     """
     Fetch the full content of a file at a specific commit/branch.

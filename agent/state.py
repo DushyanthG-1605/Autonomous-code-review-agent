@@ -16,8 +16,10 @@ class ReviewState(TypedDict):
 
     # Populated by fetch_diff
     pr_files: List[Dict[str, Any]]      # filename, patch, status, raw content
+    pr_author: str                      # GitHub login of the PR author (used as the TRAC actor)
 
     # Populated by retrieve_context
+    repo_local_path: str                      # temp checkout of the PR head
     retrieved_context: Dict[str, List[str]]   # filename -> list of related code snippets
 
     # Populated by static_analysis
@@ -25,6 +27,7 @@ class ReviewState(TypedDict):
 
     # Populated by llm_review
     review_comments: List[ReviewFinding]
+    review_notes: List[str]
 
     # Populated by prioritize
     prioritized_comments: List[ReviewFinding]
