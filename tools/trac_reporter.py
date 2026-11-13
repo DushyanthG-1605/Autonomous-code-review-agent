@@ -6,6 +6,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 TRAC_EVENTS_URL = os.environ.get("TRAC_EVENTS_URL", "http://127.0.0.1:8000/api/events")
+TRAC_API_TOKEN = os.environ.get("TRAC_API_TOKEN")
 
 
 def report_to_trac(
@@ -19,9 +20,12 @@ def report_to_trac(
     status: str | None = None,
     metadata: dict | None = None,
 ) -> dict:
+    if not TRAC_API_TOKEN:
+        raise RuntimeError("TRAC_API_TOKEN is required to report events to TRAC")
     try:
         response = requests.post(
             TRAC_EVENTS_URL,
+            headers={"Authorization": f"Bearer {TRAC_API_TOKEN}"},
             json={
                 "type": event_type,
                 "source": source,

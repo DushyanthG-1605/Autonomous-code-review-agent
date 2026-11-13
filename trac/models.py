@@ -1,9 +1,10 @@
 from datetime import datetime, timezone
 from typing import Any, Dict, Literal, Optional
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-EventType = Literal[
+LegacyEventType = Literal[
     "session.start",
     "session.end",
     "task.started",
@@ -17,15 +18,112 @@ EventType = Literal[
     "git.branch",
 ]
 
+EventType = Literal[
+    "task.started",
+    "task.progress",
+    "task.blocked",
+    "task.completed",
+    "git.commit",
+    "git.pull_request.opened",
+    "git.pull_request.merged",
+    "test.completed",
+    "build.completed",
+    "session.started",
+    "session.ended",
+]
+
+EventSource = Literal["skill", "cli", "mcp", "github", "ci"]
+
+
+class StrictMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class EmptyMetadata(StrictMetadata):
+    pass
+
+
+class TaskProgressMetadata(StrictMetadata):
+    progress: int = Field(ge=0, le=100)
+
+
+class TaskBlockedMetadata(StrictMetadata):
+    reason_code: Literal[
+        "dependency",
+        "permission",
+        "test_failure",
+        "build_failure",
+        "external",
+        "other",
+    ] = "other"
+
+
+class TaskCompletedMetadata(StrictMetadata):
+    outcome: Literal["done", "partial", "abandoned"]
+
+
+class GitCommitMetadata(StrictMetadata):
+    commit_sha: str = Field(pattern=r"^(?:[0-9a-fA-F]{7,64})$")
+    files_changed: Optional[int] = Field(default=None, ge=0)
+    insertions: Optional[int] = Field(default=None, ge=0)
+    deletions: Optional[int] = Field(default=None, ge=0)
+
+
+class PullRequestMetadata(StrictMetadata):
+    pull_request_number: int = Field(gt=0)
+    base_branch: str = Field(
+        min_length=1, max_length=120, pattern=r"^[A-Za-z0-9._/-]+$"
+    )
+    head_branch: str = Field(
+        min_length=1, max_length=120, pattern=r"^[A-Za-z0-9._/-]+$"
+    )
+
+
+class TestCompletedMetadata(StrictMetadata):
+    result: Literal["passed", "failed", "cancelled"]
+    duration_ms: Optional[int] = Field(default=None, ge=0)
+    tests_run: Optional[int] = Field(default=None, ge=0)
+    tests_failed: Optional[int] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def failed_tests_do_not_exceed_total(self):
+        if (
+            self.tests_run is not None
+            and self.tests_failed is not None
+            and self.tests_failed > self.tests_run
+        ):
+            raise ValueError("tests_failed cannot exceed tests_run")
+        return self
+
+
+class BuildCompletedMetadata(StrictMetadata):
+    result: Literal["passed", "failed", "cancelled"]
+    duration_ms: Optional[int] = Field(default=None, ge=0)
+
+
+EVENT_METADATA_MODELS = {
+    "task.started": EmptyMetadata,
+    "task.progress": TaskProgressMetadata,
+    "task.blocked": TaskBlockedMetadata,
+    "task.completed": TaskCompletedMetadata,
+    "git.commit": GitCommitMetadata,
+    "git.pull_request.opened": PullRequestMetadata,
+    "git.pull_request.merged": PullRequestMetadata,
+    "test.completed": TestCompletedMetadata,
+    "build.completed": BuildCompletedMetadata,
+    "session.started": EmptyMetadata,
+    "session.ended": EmptyMetadata,
+}
+
 
 class VersionedEvent(BaseModel):
-    """Validated envelope for a versioned activity event."""
+    """Compatibility envelope emitted by collector schema version 1."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     event_id: str = Field(pattern=r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
     schema_version: Literal[1]
-    type: EventType
+    type: LegacyEventType
     ts: datetime
     session_id: Optional[str] = None
     repo: Optional[str] = None
@@ -35,82 +133,106 @@ class VersionedEvent(BaseModel):
     data: Dict[str, Any] = Field(default_factory=dict)
 
 
-class SessionActivityData(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+class CanonicalEvent(BaseModel):
+    """Strict v2 contract; identity and project claims are server-derived."""
 
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: UUID
+    schema_version: Literal[2]
+    event_type: EventType
+    project_id: Optional[UUID] = None
+    task_id: Optional[UUID] = None
+    actor_id: Optional[UUID] = None
+    source: EventSource
+    occurred_at: datetime
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("occurred_at")
+    @classmethod
+    def require_timezone(cls, value):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("occurred_at must include a timezone")
+        return value
+
+    @field_validator("metadata")
+    @classmethod
+    def validate_metadata(cls, value, info):
+        event_type = info.data.get("event_type")
+        metadata_model = EVENT_METADATA_MODELS.get(event_type)
+        if metadata_model is None:
+            raise ValueError("Unsupported event type")
+        return metadata_model.model_validate(value, strict=True).model_dump(
+            exclude_none=True
+        )
+
+
+class SessionActivityData(StrictMetadata):
     tool_version: Optional[str] = None
     duration_s: Optional[float] = None
 
 
-class TaskActivityData(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
+class TaskActivityData(StrictMetadata):
     summary: Optional[str] = Field(default=None, max_length=200)
-    outcome: Optional[str] = None
-    reason: Optional[str] = None
+    outcome: Optional[Literal["done", "partial", "abandoned"]] = None
+    reason: Optional[str] = Field(default=None, max_length=120)
 
 
-class FileEditedData(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    path: Optional[str] = None
-    language: Optional[str] = None
-    lines_added: Optional[int] = None
-    lines_removed: Optional[int] = None
+class FileEditedData(StrictMetadata):
+    path: Optional[str] = Field(default=None, max_length=240)
+    language: Optional[str] = Field(default=None, max_length=40)
+    lines_added: Optional[int] = Field(default=None, ge=0)
+    lines_removed: Optional[int] = Field(default=None, ge=0)
 
 
-class CommandRunData(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
+class CommandRunData(StrictMetadata):
     kind: Optional[Literal["test", "build", "lint", "other"]] = None
     exit_code: Optional[int] = None
-    duration_s: Optional[float] = None
+    duration_s: Optional[float] = Field(default=None, ge=0, le=86400)
 
 
-class AgentPromptSubmittedData(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    count: Optional[int] = None
+class AgentPromptSubmittedData(StrictMetadata):
+    count: Optional[int] = Field(default=None, ge=0)
 
 
-class GitCommitData(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    sha: Optional[str] = None
-    files_changed: Optional[int] = None
-    lines_added: Optional[int] = None
-    lines_removed: Optional[int] = None
+class GitCommitData(StrictMetadata):
+    sha: Optional[str] = Field(default=None, pattern=r"^(?:[0-9a-fA-F]{7,64})$")
+    files_changed: Optional[int] = Field(default=None, ge=0)
+    lines_added: Optional[int] = Field(default=None, ge=0)
+    lines_removed: Optional[int] = Field(default=None, ge=0)
 
 
-class GitPushData(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+class GitPushData(StrictMetadata):
+    commits: Optional[int] = Field(default=None, ge=0)
+    remote_branch: Optional[str] = Field(
+        default=None, max_length=120, pattern=r"^[A-Za-z0-9._/-]+$"
+    )
 
-    commits: Optional[int] = None
-    remote_branch: Optional[str] = None
 
-
-class GitBranchData(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    action: Optional[str] = None
-    name: Optional[str] = None
+class GitBranchData(StrictMetadata):
+    action: Optional[Literal["created", "switched", "deleted", "updated"]] = None
+    name: Optional[str] = Field(
+        default=None, max_length=120, pattern=r"^[A-Za-z0-9._/-]+$"
+    )
 
 
 class EventCreate(BaseModel):
     """Shape of an event when it's being submitted to the API."""
-    type: str                      # e.g. "agent.review_completed", "pr.merged"
-    source: str                    # e.g. "code-review-agent", "github"
-    summary: str                   # e.g. "Reviewed PR #4 — found 2 critical issues"
-    repo: Optional[str] = None
-    ref: Optional[str] = None      # e.g. "PR #4", commit SHA
-    actor: Optional[str] = None    # e.g. "Dushyanth Gadapala"
-    execution_id: Optional[str] = None
-    status: Optional[str] = None
+
+    type: str = Field(min_length=1, max_length=80)
+    source: str = Field(min_length=1, max_length=80)
+    summary: str = Field(min_length=1, max_length=500)
+    repo: Optional[str] = Field(default=None, max_length=200)
+    ref: Optional[str] = Field(default=None, max_length=200)
+    actor: Optional[str] = Field(default=None, max_length=120)
+    execution_id: Optional[str] = Field(default=None, max_length=200)
+    status: Optional[str] = Field(default=None, max_length=80)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class Event(EventCreate):
     """Shape of an event when it's returned from the API (includes DB fields)."""
+
     id: int
     timestamp: str
 

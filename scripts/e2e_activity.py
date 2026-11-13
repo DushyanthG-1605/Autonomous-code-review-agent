@@ -134,7 +134,7 @@ def _wait_for_backend(process, base_url, log_path):
         if process.poll() is not None:
             raise RuntimeError(f"TRAC backend exited during startup:\n{_log_text(log_path)}")
         try:
-            with urlopen(f"{base_url}/api/events", timeout=0.5) as response:
+            with urlopen(f"{base_url}/", timeout=0.5) as response:
                 if response.status == 200:
                     return
         except (OSError, URLError, HTTPError):
