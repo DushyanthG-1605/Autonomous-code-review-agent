@@ -2,7 +2,10 @@ import asyncio
 import hashlib
 import json
 import math
+import os
 import re
+import secrets
+import sqlite3
 import threading
 import time
 from collections import deque
@@ -22,14 +25,18 @@ from trac.models import (
     AgentPromptSubmittedData,
     CanonicalEvent,
     CommandRunData,
+    DevLoginRequest,
     Event,
     EventCreate,
     FileEditedData,
     GitBranchData,
     GitCommitData,
     GitPushData,
+    ProjectCreate,
     SessionActivityData,
     TaskActivityData,
+    TaskCreate,
+    TaskPatch,
     VersionedEvent,
     now_iso,
 )
@@ -80,6 +87,86 @@ def _event_response(row):
     return event
 
 
+def _development_auth_enabled() -> bool:
+    return (
+        os.environ.get("TRAC_ENV", "").strip().lower() == "development"
+        and os.environ.get("TRAC_DEV_AUTH_ENABLED", "").strip().lower() == "true"
+    )
+
+
+def _is_project_head(device) -> bool:
+    return (
+        device["project_head_id"] == device["user_id"]
+        or device["membership_role"] == "owner"
+    )
+
+
+def _require_project_device(device, project_id: str):
+    if str(device["project_id"]) != str(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+
+def _event_visibility_clause(device, alias="activity_events"):
+    if _is_project_head(device):
+        return "", ()
+    return (
+        f""" AND (
+            {alias}.user_id = ?
+            OR EXISTS (
+                SELECT 1 FROM tasks visible_task
+                WHERE visible_task.id = {alias}.task_id
+                  AND visible_task.assignee_id = ?
+            )
+        )""",
+        (device["user_id"], device["user_id"]),
+    )
+
+
+def _task_row(conn, task_id: str):
+    return conn.execute(
+        """
+        SELECT tasks.*, projects.project_head_id,
+               assignee.public_id AS assignee_public_id,
+               assignee.display_name AS assignee_display_name,
+               assignee.github_username AS assignee_github_username
+        FROM tasks
+        JOIN projects ON projects.id = tasks.project_id
+        LEFT JOIN users AS assignee ON assignee.id = tasks.assignee_id
+        WHERE tasks.id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+
+
+def _serialize_task(row):
+    return {
+        "id": row["id"],
+        "project_id": row["project_id"],
+        "title": row["title"],
+        "description": row["description"],
+        "assignee_id": row["assignee_public_id"],
+        "assignee_display_name": row["assignee_display_name"],
+        "assignee_github_username": row["assignee_github_username"],
+        "status": row["status"],
+        "priority": row["priority"],
+        "progress_percent": row["progress_percent"],
+        "progress_is_estimate": bool(row["progress_is_estimate"]),
+        "due_date": row["due_date"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _require_task_access(task, device):
+    if task is None or task["project_id"] != device["project_id"]:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if not (
+        _is_project_head(device)
+        or task["assignee_id"] == device["user_id"]
+    ):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+
 def _authenticate_device(authorization: Optional[str], scope: str):
     scheme, separator, token = (authorization or "").partition(" ")
     if not separator or scheme.lower() != "bearer" or not token.strip():
@@ -91,8 +178,12 @@ def _authenticate_device(authorization: Optional[str], scope: str):
         row = conn.execute(
             """
             SELECT devices.id AS device_id, devices.user_id, devices.project_id,
-                   devices.scopes, users.public_id AS actor_id,
-                   users.github_login, users.display_name, projects.slug AS project_slug
+                   devices.scopes, devices.auth_mode, users.public_id AS actor_id,
+                   users.github_login, users.github_username, users.email,
+                   users.display_name, users.role AS user_role,
+                   projects.slug AS project_slug, projects.project_key,
+                   projects.project_head_id,
+                   project_memberships.role AS membership_role
             FROM devices
             JOIN users ON users.id = devices.user_id
             JOIN projects ON projects.id = devices.project_id
@@ -107,6 +198,8 @@ def _authenticate_device(authorization: Optional[str], scope: str):
         conn.close()
     if row is None:
         raise HTTPException(status_code=401, detail="Invalid or missing bearer token")
+    if row["auth_mode"] == "development" and not _development_auth_enabled():
+        raise HTTPException(status_code=401, detail="Development credential disabled")
 
     try:
         scopes = json.loads(row["scopes"])
@@ -126,7 +219,7 @@ def _device_is_active(
     try:
         row = conn.execute(
             """
-            SELECT devices.scopes FROM devices
+            SELECT devices.scopes, devices.auth_mode FROM devices
             JOIN project_memberships
               ON project_memberships.project_id = devices.project_id
              AND project_memberships.user_id = devices.user_id
@@ -138,6 +231,8 @@ def _device_is_active(
     finally:
         conn.close()
     if row is None:
+        return False
+    if row["auth_mode"] == "development" and not _development_auth_enabled():
         return False
     try:
         return scope in json.loads(row["scopes"])
@@ -351,6 +446,21 @@ def _compatibility_source(source: Optional[str]) -> str:
 
 def _ingest_canonical(conn, event: CanonicalEvent, device, received_at: str):
     event_id = str(event.event_id)
+    task = None
+    if event.task_id is not None:
+        task = conn.execute(
+            "SELECT * FROM tasks WHERE id = ? AND project_id = ?",
+            (str(event.task_id), device["project_id"]),
+        ).fetchone()
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if not (
+            _is_project_head(device)
+            or task["assignee_id"] == device["user_id"]
+        ):
+            raise HTTPException(
+                status_code=403, detail="Not authorized to report on this task"
+            )
     existing = conn.execute(
         "SELECT project_id FROM activity_events WHERE event_id = ?", (event_id,)
     ).fetchone()
@@ -396,7 +506,62 @@ def _ingest_canonical(conn, event: CanonicalEvent, device, received_at: str):
         device=device,
         occurred_at=received_at,
     )
+    if task is not None:
+        _apply_task_event(conn, task, event, device, event_id, received_at)
     return True
+
+
+def _apply_task_event(conn, task, event, device, event_id: str, timestamp: str):
+    progress_percent = None
+    progress_is_estimate = False
+    update_fields = {}
+
+    if event.event_type == "task.started":
+        update_fields["status"] = "in_progress"
+    elif event.event_type == "task.progress":
+        update_fields["status"] = "in_progress"
+        progress_percent = event.metadata["progress"]
+        progress_is_estimate = True
+        update_fields["progress_percent"] = progress_percent
+        update_fields["progress_is_estimate"] = 1
+    elif event.event_type == "task.blocked":
+        update_fields["status"] = "blocked"
+    elif event.event_type == "task.completed":
+        outcome = event.metadata["outcome"]
+        update_fields["status"] = {
+            "done": "done",
+            "partial": "in_progress",
+            "abandoned": "todo",
+        }[outcome]
+        if outcome == "done":
+            update_fields["progress_percent"] = 100
+            update_fields["progress_is_estimate"] = 0
+            progress_percent = 100
+
+    if update_fields:
+        assignments = ", ".join(f"{key} = ?" for key in update_fields)
+        conn.execute(
+            f"UPDATE tasks SET {assignments}, updated_at = ? WHERE id = ?",
+            (*update_fields.values(), timestamp, task["id"]),
+        )
+    conn.execute(
+        """
+        INSERT INTO task_updates
+            (id, task_id, actor_id, event_id, update_type, note,
+             progress_percent, progress_is_estimate, timestamp)
+        VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)
+        """,
+        (
+            str(uuid4()),
+            task["id"],
+            device["user_id"],
+            event_id,
+            event.event_type,
+            progress_percent,
+            int(progress_is_estimate),
+            timestamp,
+        ),
+    )
 
 
 def _ingest_legacy(conn, event: VersionedEvent, device, received_at: str):
@@ -555,12 +720,18 @@ async def stream_activity_events(
         if last_event_id == "0":
             initial_sequence = 0
         elif last_event_id:
+            visibility, visibility_params = _event_visibility_clause(device)
             cursor = conn.execute(
                 """
-                SELECT sequence FROM activity_event_stream
-                WHERE event_id = ? AND project_id = ?
-                """,
-                (last_event_id, device["project_id"]),
+                SELECT activity_event_stream.sequence
+                FROM activity_event_stream
+                JOIN activity_events
+                  ON activity_events.event_id = activity_event_stream.event_id
+                WHERE activity_event_stream.event_id = ?
+                  AND activity_event_stream.project_id = ?
+                """
+                + visibility,
+                (last_event_id, device["project_id"], *visibility_params),
             ).fetchone()
             if cursor is None:
                 raise HTTPException(
@@ -600,6 +771,8 @@ async def stream_activity_events(
                            activity_events.schema_version,
                            activity_events.type AS event_type,
                            activity_events.project_id, activity_events.task_id,
+                           activity_events.user_id,
+                           assigned_task.assignee_id AS task_assignee_id,
                            users.public_id AS actor_id, activity_events.source,
                            activity_events.tool,
                            activity_events.ts AS occurred_at,
@@ -609,6 +782,8 @@ async def stream_activity_events(
                     JOIN activity_events
                       ON activity_events.event_id = activity_event_stream.event_id
                     JOIN users ON users.id = activity_events.user_id
+                    LEFT JOIN tasks AS assigned_task
+                      ON assigned_task.id = activity_events.task_id
                     WHERE activity_event_stream.project_id = ?
                       AND activity_event_stream.sequence > ?
                     ORDER BY activity_event_stream.sequence LIMIT 100
@@ -618,10 +793,18 @@ async def stream_activity_events(
             finally:
                 conn.close()
             if rows:
+                emitted = False
                 for row in rows:
                     sequence = row["sequence"]
                     result = dict(row)
                     result.pop("sequence", None)
+                    if not _is_project_head(device) and not (
+                        result["user_id"] == device["user_id"]
+                        or result["task_assignee_id"] == device["user_id"]
+                    ):
+                        continue
+                    result.pop("user_id", None)
+                    result.pop("task_assignee_id", None)
                     frame_type = "activity"
                     if result["source"] == "compat-api":
                         frame_type = "compatibility"
@@ -646,7 +829,11 @@ async def stream_activity_events(
                         f"event: {frame_type}\n"
                         f"data: {json.dumps(result, separators=(',', ':'))}\n\n"
                     )
-                heartbeat_at = time.monotonic()
+                    emitted = True
+                if emitted:
+                    heartbeat_at = time.monotonic()
+                else:
+                    await asyncio.sleep(STREAM_POLL_SECONDS)
             else:
                 if time.monotonic() - heartbeat_at >= STREAM_HEARTBEAT_SECONDS:
                     yield ": heartbeat\n\n"
@@ -676,13 +863,17 @@ def list_activity_events(
     conn = get_connection()
     try:
         conn.execute("BEGIN")
+        visibility, visibility_params = _event_visibility_clause(device)
         rows = conn.execute(
             """
             SELECT event_id FROM activity_events
             WHERE project_id = ? AND source != 'compat-api'
+            """
+            + visibility
+            + """
             ORDER BY received_at DESC LIMIT ?
             """,
-            (device["project_id"], limit),
+            (device["project_id"], *visibility_params, limit),
         ).fetchall()
         events = [
             _canonical_response(conn, row["event_id"], device["project_id"])
@@ -690,10 +881,17 @@ def list_activity_events(
         ]
         cursor = conn.execute(
             """
-            SELECT event_id FROM activity_event_stream
-            WHERE project_id = ? ORDER BY sequence DESC LIMIT 1
+            SELECT activity_event_stream.event_id
+            FROM activity_event_stream
+            JOIN activity_events
+              ON activity_events.event_id = activity_event_stream.event_id
+            WHERE activity_event_stream.project_id = ?
+            """
+            + visibility
+            + """
+            ORDER BY activity_event_stream.sequence DESC LIMIT 1
             """,
-            (device["project_id"],),
+            (device["project_id"], *visibility_params),
         ).fetchone()
         response.headers["X-TRAC-Event-Cursor"] = cursor["event_id"] if cursor else "0"
         conn.commit()
@@ -713,7 +911,20 @@ def get_activity_event(
         raise HTTPException(status_code=404, detail="Event not found") from exc
     conn = get_connection()
     try:
-        event = _canonical_response(conn, event_id, device["project_id"])
+        visibility, visibility_params = _event_visibility_clause(device)
+        visible = conn.execute(
+            """
+            SELECT 1 FROM activity_events
+            WHERE event_id = ? AND project_id = ?
+            """
+            + visibility,
+            (event_id, device["project_id"], *visibility_params),
+        ).fetchone()
+        event = (
+            _canonical_response(conn, event_id, device["project_id"])
+            if visible
+            else None
+        )
     finally:
         conn.close()
     if event is None:
@@ -882,28 +1093,57 @@ def list_events(
     conn = get_connection()
     try:
         conn.execute("BEGIN")
+        visibility = ""
+        visibility_params = ()
+        if not _is_project_head(device):
+            visibility = """
+              AND (
+                  events.actor_user_id = ?
+                  OR EXISTS (
+                      SELECT 1 FROM activity_events
+                      JOIN tasks ON tasks.id = activity_events.task_id
+                      WHERE activity_events.event_id = events.activity_event_id
+                        AND tasks.assignee_id = ?
+                  )
+              )
+            """
+            visibility_params = (device["user_id"], device["user_id"])
         if source:
             rows = conn.execute(
                 """
                 SELECT * FROM events WHERE project_id = ? AND source = ?
+                """
+                + visibility
+                + """
                 ORDER BY timestamp DESC LIMIT ?
                 """,
-                (device["project_id"], source, limit),
+                (device["project_id"], source, *visibility_params, limit),
             ).fetchall()
         else:
             rows = conn.execute(
                 """
                 SELECT * FROM events WHERE project_id = ?
+                """
+                + visibility
+                + """
                 ORDER BY timestamp DESC LIMIT ?
                 """,
-                (device["project_id"], limit),
+                (device["project_id"], *visibility_params, limit),
             ).fetchall()
+        stream_visibility, stream_visibility_params = _event_visibility_clause(device)
         cursor = conn.execute(
             """
-            SELECT event_id FROM activity_event_stream
-            WHERE project_id = ? ORDER BY sequence DESC LIMIT 1
+            SELECT activity_event_stream.event_id
+            FROM activity_event_stream
+            JOIN activity_events
+              ON activity_events.event_id = activity_event_stream.event_id
+            WHERE activity_event_stream.project_id = ?
+            """
+            + stream_visibility
+            + """
+            ORDER BY activity_event_stream.sequence DESC LIMIT 1
             """,
-            (device["project_id"],),
+            (device["project_id"], *stream_visibility_params),
         ).fetchone()
         response.headers["X-TRAC-Event-Cursor"] = cursor["event_id"] if cursor else "0"
         conn.commit()
@@ -917,15 +1157,574 @@ def get_event(event_id: int, request: Request):
     device = _authenticate_device(request.headers.get("authorization"), "events:read")
     conn = get_connection()
     try:
+        visibility = ""
+        visibility_params = ()
+        if not _is_project_head(device):
+            visibility = """
+              AND (
+                  events.actor_user_id = ?
+                  OR EXISTS (
+                      SELECT 1 FROM activity_events
+                      JOIN tasks ON tasks.id = activity_events.task_id
+                      WHERE activity_events.event_id = events.activity_event_id
+                        AND tasks.assignee_id = ?
+                  )
+              )
+            """
+            visibility_params = (device["user_id"], device["user_id"])
         row = conn.execute(
-            "SELECT * FROM events WHERE id = ? AND project_id = ?",
-            (event_id, device["project_id"]),
+            "SELECT * FROM events WHERE id = ? AND project_id = ?" + visibility,
+            (event_id, device["project_id"], *visibility_params),
         ).fetchone()
     finally:
         conn.close()
     if row is None:
         raise HTTPException(status_code=404, detail="Event not found")
     return _event_response(row)
+
+
+@app.post("/v1/dev/login")
+def development_login(payload: DevLoginRequest):
+    if not _development_auth_enabled():
+        raise HTTPException(status_code=404, detail="Development login is disabled")
+
+    conn = get_connection()
+    try:
+        memberships = conn.execute(
+            """
+            SELECT users.id AS user_id, users.public_id, users.display_name,
+                   users.github_username, projects.id AS project_id,
+                   project_memberships.role
+            FROM users
+            JOIN project_memberships
+              ON project_memberships.user_id = users.id
+            JOIN projects ON projects.id = project_memberships.project_id
+            WHERE lower(COALESCE(users.github_username, users.github_login)) = lower(?)
+              AND projects.id = ?
+            """,
+            (payload.github_username, str(payload.project_id)),
+        ).fetchall()
+        if len(memberships) != 1:
+            raise HTTPException(status_code=401, detail="Unknown user or project")
+        membership = memberships[0]
+
+        token = secrets.token_urlsafe(32)
+        scopes = ["events:read"]
+        if membership["role"] in {"owner", "member"}:
+            scopes.append("events:ingest")
+        conn.execute(
+            """
+            INSERT INTO devices
+                (user_id, token_hash, label, created_at, project_id, scopes, auth_mode)
+            VALUES (?, ?, 'Development login', ?, ?, ?, 'development')
+            """,
+            (
+                membership["user_id"],
+                hashlib.sha256(token.encode("utf-8")).hexdigest(),
+                now_iso(),
+                membership["project_id"],
+                json.dumps(scopes),
+            ),
+        )
+        conn.commit()
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "user_id": membership["public_id"],
+            "project_id": membership["project_id"],
+            "role": membership["role"],
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _project_identifier(value: str) -> str:
+    try:
+        return str(UUID(value))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Project not found") from exc
+
+
+def _project_response(row):
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "description": row["description"],
+        "project_key": row["project_key"],
+        "project_head_id": row["head_public_id"],
+        "created_at": row["created_at"],
+        "role": row["membership_role"],
+    }
+
+
+def _project_detail_row(conn, project_id: str, user_id: int):
+    return conn.execute(
+        """
+        SELECT projects.*, users.public_id AS head_public_id,
+               project_memberships.role AS membership_role
+        FROM projects
+        JOIN project_memberships
+          ON project_memberships.project_id = projects.id
+         AND project_memberships.user_id = ?
+        LEFT JOIN users ON users.id = projects.project_head_id
+        WHERE projects.id = ?
+        """,
+        (user_id, project_id),
+    ).fetchone()
+
+
+@app.get("/v1/projects")
+def list_projects(authorization: Optional[str] = Header(default=None)):
+    device = _authenticate_device(authorization, "events:read")
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT projects.*, users.public_id AS head_public_id,
+                   project_memberships.role AS membership_role
+            FROM project_memberships
+            JOIN projects ON projects.id = project_memberships.project_id
+            LEFT JOIN users ON users.id = projects.project_head_id
+            WHERE project_memberships.user_id = ?
+            ORDER BY projects.name COLLATE NOCASE
+            """,
+            (device["user_id"],),
+        ).fetchall()
+        return [_project_response(row) for row in rows]
+    finally:
+        conn.close()
+
+
+@app.post("/v1/projects", status_code=201)
+def create_project(
+    payload: ProjectCreate, authorization: Optional[str] = Header(default=None)
+):
+    device = _authenticate_device(authorization, "events:ingest")
+    project_id = str(uuid4())
+    token = secrets.token_urlsafe(32)
+    timestamp = now_iso()
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            INSERT INTO projects
+                (id, slug, name, description, project_key, project_head_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                project_id,
+                payload.project_key,
+                payload.name,
+                payload.description,
+                payload.project_key,
+                device["user_id"],
+                timestamp,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO project_memberships (project_id, user_id, role, created_at)
+            VALUES (?, ?, 'owner', ?)
+            """,
+            (project_id, device["user_id"], timestamp),
+        )
+        conn.execute(
+            """
+            INSERT INTO devices
+                (user_id, token_hash, label, created_at, project_id, scopes)
+            VALUES (?, ?, 'Project head API credential', ?, ?,
+                    '["events:ingest","events:read"]')
+            """,
+            (
+                device["user_id"],
+                hashlib.sha256(token.encode("utf-8")).hexdigest(),
+                timestamp,
+                project_id,
+            ),
+        )
+        conn.commit()
+        row = _project_detail_row(conn, project_id, device["user_id"])
+    except sqlite3.IntegrityError as exc:
+        conn.rollback()
+        raise HTTPException(
+            status_code=409, detail="Project key already exists"
+        ) from exc
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    result = _project_response(row)
+    result["device_token"] = token
+    return result
+
+
+@app.get("/v1/projects/{project_id}")
+def get_project(project_id: str, authorization: Optional[str] = Header(default=None)):
+    device = _authenticate_device(authorization, "events:read")
+    project_id = _project_identifier(project_id)
+    _require_project_device(device, project_id)
+    conn = get_connection()
+    try:
+        row = _project_detail_row(conn, project_id, device["user_id"])
+    finally:
+        conn.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return _project_response(row)
+
+
+def _task_list_rows(conn, project_id: str, where: str = "", params=()):
+    return conn.execute(
+        """
+        SELECT tasks.*, assignee.public_id AS assignee_public_id,
+               assignee.display_name AS assignee_display_name,
+               assignee.github_username AS assignee_github_username
+        FROM tasks
+        LEFT JOIN users AS assignee ON assignee.id = tasks.assignee_id
+        WHERE tasks.project_id = ?
+        """
+        + where
+        + " ORDER BY tasks.updated_at DESC, tasks.created_at DESC",
+        (project_id, *params),
+    ).fetchall()
+
+
+def _task_updates(conn, task_id: str):
+    rows = conn.execute(
+        """
+        SELECT task_updates.*, users.public_id AS actor_public_id,
+               users.display_name AS actor_display_name,
+               users.github_username AS actor_github_username
+        FROM task_updates
+        JOIN users ON users.id = task_updates.actor_id
+        WHERE task_updates.task_id = ?
+        ORDER BY task_updates.timestamp DESC, task_updates.id DESC
+        """,
+        (task_id,),
+    ).fetchall()
+    return [
+        {
+            "id": row["id"],
+            "task_id": row["task_id"],
+            "actor_id": row["actor_public_id"],
+            "actor_display_name": row["actor_display_name"],
+            "actor_github_username": row["actor_github_username"],
+            "event_id": row["event_id"],
+            "update_type": row["update_type"],
+            "note": row["note"],
+            "progress_percent": row["progress_percent"],
+            "progress_is_estimate": bool(row["progress_is_estimate"]),
+            "timestamp": row["timestamp"],
+        }
+        for row in rows
+    ]
+
+
+@app.get("/v1/projects/{project_id}/tasks")
+def list_project_tasks(
+    project_id: str, authorization: Optional[str] = Header(default=None)
+):
+    device = _authenticate_device(authorization, "events:read")
+    project_id = _project_identifier(project_id)
+    _require_project_device(device, project_id)
+    where, params = (
+        ("", ())
+        if _is_project_head(device)
+        else (" AND tasks.assignee_id = ?", (device["user_id"],))
+    )
+    conn = get_connection()
+    try:
+        rows = _task_list_rows(conn, project_id, where, params)
+        return [_serialize_task(row) for row in rows]
+    finally:
+        conn.close()
+
+
+@app.post("/v1/projects/{project_id}/tasks", status_code=201)
+def create_project_task(
+    project_id: str,
+    payload: TaskCreate,
+    authorization: Optional[str] = Header(default=None),
+):
+    device = _authenticate_device(authorization, "events:ingest")
+    project_id = _project_identifier(project_id)
+    _require_project_device(device, project_id)
+    if not _is_project_head(device):
+        raise HTTPException(
+            status_code=403, detail="Only project heads can create tasks"
+        )
+
+    task_id = str(uuid4())
+    timestamp = now_iso()
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        assignee_id = None
+        if payload.assignee_id is not None:
+            assignee = conn.execute(
+                """
+                SELECT users.id FROM users
+                JOIN project_memberships
+                  ON project_memberships.user_id = users.id
+                 AND project_memberships.project_id = ?
+                WHERE users.public_id = ?
+                  AND project_memberships.role IN ('owner', 'member')
+                """,
+                (project_id, str(payload.assignee_id)),
+            ).fetchone()
+            if assignee is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Assignee must be an owner or member of this project",
+                )
+            assignee_id = assignee["id"]
+        conn.execute(
+            """
+            INSERT INTO tasks
+                (
+                    id, project_id, title, description, assignee_id, status, priority,
+                    progress_percent, progress_is_estimate, due_date, created_at,
+                    updated_at
+                )
+            VALUES (?, ?, ?, ?, ?, 'todo', ?, 0, 0, ?, ?, ?)
+            """,
+            (
+                task_id,
+                project_id,
+                payload.title,
+                payload.description,
+                assignee_id,
+                payload.priority,
+                payload.due_date.isoformat() if payload.due_date else None,
+                timestamp,
+                timestamp,
+            ),
+        )
+        row = _task_row(conn, task_id)
+        conn.commit()
+        return _serialize_task(row)
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@app.get("/v1/tasks/{task_id}")
+def get_task(task_id: str, authorization: Optional[str] = Header(default=None)):
+    device = _authenticate_device(authorization, "events:read")
+    try:
+        task_id = str(UUID(task_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Task not found") from exc
+    conn = get_connection()
+    try:
+        row = _task_row(conn, task_id)
+        _require_task_access(row, device)
+        result = _serialize_task(row)
+        result["updates"] = _task_updates(conn, task_id)
+        return result
+    finally:
+        conn.close()
+
+
+@app.patch("/v1/tasks/{task_id}")
+def patch_task(
+    task_id: str,
+    payload: TaskPatch,
+    authorization: Optional[str] = Header(default=None),
+):
+    device = _authenticate_device(authorization, "events:ingest")
+    try:
+        task_id = str(UUID(task_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Task not found") from exc
+    fields = payload.model_fields_set
+    if not fields:
+        raise HTTPException(status_code=422, detail="At least one field is required")
+    for field in {"title", "status", "priority", "progress_percent"} & fields:
+        if getattr(payload, field) is None:
+            raise HTTPException(status_code=422, detail=f"{field} cannot be null")
+
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = _task_row(conn, task_id)
+        _require_task_access(row, device)
+        is_head = _is_project_head(device)
+        if not is_head and fields - {"status", "progress_percent", "note"}:
+            raise HTTPException(
+                status_code=403,
+                detail="Members may only report status, progress, and notes",
+            )
+        updates = {}
+        for field in ("title", "description", "status", "priority", "due_date"):
+            if field in fields:
+                value = getattr(payload, field)
+                updates[field] = (
+                    value.isoformat() if field == "due_date" and value else value
+                )
+        if "assignee_id" in fields:
+            public_id = payload.assignee_id
+            if public_id is None:
+                updates["assignee_id"] = None
+            else:
+                assignee = conn.execute(
+                    """
+                    SELECT users.id FROM users
+                    JOIN project_memberships
+                      ON project_memberships.user_id = users.id
+                     AND project_memberships.project_id = ?
+                    WHERE users.public_id = ?
+                      AND project_memberships.role IN ('owner', 'member')
+                    """,
+                    (row["project_id"], str(public_id)),
+                ).fetchone()
+                if assignee is None:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Assignee must be an owner or member of this project",
+                    )
+                updates["assignee_id"] = assignee["id"]
+        if "progress_percent" in fields:
+            updates["progress_percent"] = payload.progress_percent
+            updates["progress_is_estimate"] = 0
+
+        timestamp = now_iso()
+        if updates:
+            assignments = ", ".join(f"{key} = ?" for key in updates)
+            conn.execute(
+                f"UPDATE tasks SET {assignments}, updated_at = ? WHERE id = ?",
+                (*updates.values(), timestamp, task_id),
+            )
+        if "status" in fields:
+            update_type = "status.changed"
+        elif "progress_percent" in fields:
+            update_type = "progress.reported"
+        else:
+            update_type = "task.updated"
+        conn.execute(
+            """
+            INSERT INTO task_updates
+                (id, task_id, actor_id, event_id, update_type, note,
+                 progress_percent, progress_is_estimate, timestamp)
+            VALUES (?, ?, ?, NULL, ?, ?, ?, 0, ?)
+            """,
+            (
+                str(uuid4()),
+                task_id,
+                device["user_id"],
+                update_type,
+                payload.note,
+                payload.progress_percent if "progress_percent" in fields else None,
+                timestamp,
+            ),
+        )
+        result = _serialize_task(_task_row(conn, task_id))
+        conn.commit()
+        return result
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@app.get("/v1/me/tasks")
+def list_my_tasks(authorization: Optional[str] = Header(default=None)):
+    device = _authenticate_device(authorization, "events:read")
+    conn = get_connection()
+    try:
+        rows = _task_list_rows(
+            conn,
+            device["project_id"],
+            " AND tasks.assignee_id = ?",
+            (device["user_id"],),
+        )
+        return [_serialize_task(row) for row in rows]
+    finally:
+        conn.close()
+
+
+@app.get("/v1/projects/{project_id}/activity")
+def list_project_activity(
+    project_id: str,
+    authorization: Optional[str] = Header(default=None),
+    limit: int = 100,
+):
+    device = _authenticate_device(authorization, "events:read")
+    project_id = _project_identifier(project_id)
+    _require_project_device(device, project_id)
+    if not _is_project_head(device):
+        raise HTTPException(
+            status_code=403, detail="Only project heads can view project activity"
+        )
+    if not 1 <= limit <= 200:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 200")
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT event_id FROM activity_events
+            WHERE project_id = ? AND source != 'compat-api'
+            ORDER BY received_at DESC LIMIT ?
+            """,
+            (project_id, limit),
+        ).fetchall()
+        events = []
+        for row in rows:
+            event = _canonical_response(conn, row["event_id"], project_id)
+            if event is not None:
+                events.append(event)
+        return events
+    finally:
+        conn.close()
+
+
+@app.get("/v1/projects/{project_id}/overview")
+def get_project_overview(
+    project_id: str, authorization: Optional[str] = Header(default=None)
+):
+    device = _authenticate_device(authorization, "events:read")
+    project_id = _project_identifier(project_id)
+    _require_project_device(device, project_id)
+    if not _is_project_head(device):
+        raise HTTPException(
+            status_code=403, detail="Only project heads can view project overview"
+        )
+    conn = get_connection()
+    try:
+        counts = {
+            row["status"]: row["count"]
+            for row in conn.execute(
+                """
+                SELECT status, COUNT(*) AS count FROM tasks
+                WHERE project_id = ? GROUP BY status
+                """,
+                (project_id,),
+            ).fetchall()
+        }
+        return {
+            "project_id": project_id,
+            "task_counts": {
+                status: counts.get(status, 0)
+                for status in ("todo", "in_progress", "blocked", "in_review", "done")
+            },
+            "total_tasks": sum(counts.values()),
+        }
+    finally:
+        conn.close()
 
 
 @app.get("/")

@@ -4,6 +4,10 @@
 **Scope:** Current checkout, including the uncommitted TRAC collector/dashboard changes present during the audit.  
 **Status:** Architecture and baseline audit only; no new product integration has been implemented.
 
+> **Scope note:** Sections through “Remaining risks and blockers” preserve the
+> Phase 1 audit snapshot and findings as they stood then. The current Phase 2–3
+> architecture and superseding behavior are recorded in the update below.
+
 ## Executive summary
 
 TRAC currently combines two applications:
@@ -150,3 +154,75 @@ The end-to-end script starts the backend and verifies the collector/API path. It
 5. **Medium — live stream is not live:** heartbeat-only SSE and 5-second browser polling are independent; no event fan-out or replay semantics exist.
 6. **Medium — schema migration and event identity:** schema changes are ad hoc, and event-ID uniqueness is global rather than scoped to an owner/project.
 7. **Medium — integration gaps:** pairing is not implemented, CI/GitHub activity hooks are absent, and the current event type schema does not match the desired progress/test lifecycle.
+
+## Current architecture after Phases 2–3
+
+The Phase 1 findings above are historical. The current runtime still uses
+FastAPI, SQLite, the static dashboard, and the existing collector, but project
+scoping, canonical event ingestion, task management, and real SSE delivery have
+since been added.
+
+### Current API surface
+
+| Method and path | Behavior |
+|---|---|
+| `POST /v1/events` | Authenticated version-1 compatibility and strict version-2 event ingestion; task lifecycle version-2 events require an existing authorized `task_id`. |
+| `GET /v1/events`, `GET /v1/events/{event_id}` | Authenticated project event list/detail; project heads see all, members see their own events and activity on their assigned tasks. |
+| `GET /v1/events/stream`, `GET /api/events/stream` | Authenticated durable SSE replay with event IDs, `Last-Event-ID`, heartbeat, reconnect support, and the same project/member visibility. |
+| `POST /api/events`, `GET /api/events`, `GET /api/events/{id}` | Authenticated compatibility API used by the review reporter/dashboard. |
+| `GET/POST /v1/projects`, `GET /v1/projects/{id}` | Membership project listing, project creation, and project detail. Creation returns a one-time project-scoped device token. |
+| `GET/POST /v1/projects/{id}/tasks` | Head/member-scoped task listing and head-only task creation/assignment. |
+| `GET/PATCH /v1/tasks/{id}`, `GET /v1/me/tasks` | Authorized task detail/history, updates, and assigned-work listing. |
+| `GET /v1/projects/{id}/activity`, `GET /v1/projects/{id}/overview` | Project-head-only activity and task-count overview. |
+| `POST /v1/dev/login` | Optional username-only development login; disabled unless explicitly enabled for development and rejected in production. |
+
+### Current data and event flow
+
+`schema_migrations` tracks two additive SQLite migrations:
+
+1. `001_project_scoped_events.sql` adds public user IDs, projects,
+   memberships, device project/scopes, activity project/task references, and
+   the durable event-stream sequence. Historical rows are assigned only where
+   the migration can establish an unambiguous owner/project.
+2. `002_projects_tasks_identity.sql` adds optional email/GitHub username and
+   user role, project key/description/head, device auth mode, `tasks`, and
+   `task_updates`, with foreign keys and indexes.
+
+The main persisted tables are `users`, `projects`, `project_memberships`,
+`devices`, `tasks`, `task_updates`, `activity_events`,
+`activity_event_stream`, and the retained compatibility `events` table.
+SQLite foreign-key checks are enabled per connection. Device tokens are
+random and stored only as SHA-256 hashes.
+
+For version-2 task events, the authenticated credential supplies actor and
+project; body identity claims are ignored. The task must belong to that
+credential's project, and the actor must be the project head or task assignee.
+Event persistence, task state change, task-update history, compatibility
+mirror, and stream sequence insertion are transactional. Duplicate event IDs
+do not create a second task update. Agent/event progress is stored with
+`progress_is_estimate=true`; commits and elapsed time do not infer task
+percentages. Direct task API reports are marked non-estimated.
+
+The SSE implementation polls `activity_event_stream` and joins persisted
+events, so event replay survives process restarts and does not rely on an
+in-memory-only bus. The dashboard now uses authenticated fetch-streaming SSE
+and no longer substitutes mock events on API failure. SQLite/shared-file
+multi-process behavior is supported locally; multi-host streaming still needs
+shared transactional storage or an external broker.
+
+### Current authorization boundaries and gaps
+
+- Project heads see all tasks and authorized project activity. Members see
+  only their assigned tasks, their own activity, and activity attached to
+  assigned tasks. Cross-project task/event details are hidden with `404`.
+- Project-specific API access requires a credential scoped to that project.
+- The local development login is passwordless and suitable only for a trusted
+  development environment. Production OAuth/SSO login is not implemented.
+- Version-1 collector events remain compatible but have no structured task
+  UUID, so legacy task events cannot be linked to `tasks`; new task lifecycle
+  producers must use version 2 with a real task ID.
+- GitHub App/webhook and CI activity integrations, secure pairing, and
+  multi-host event delivery remain unimplemented.
+- Project dashboard projections are still limited; task APIs are available,
+  but the dashboard has not been redesigned into a complete task-management
+  interface.

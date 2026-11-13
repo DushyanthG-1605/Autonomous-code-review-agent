@@ -79,7 +79,10 @@ def test_additive_migration_preserves_and_scopes_existing_rows(tmp_path, monkeyp
     db.init_db()
     conn = db.get_connection()
     user = conn.execute(
-        "SELECT public_id FROM users WHERE github_login = 'alice'"
+        """
+        SELECT users.public_id, users.github_username, users.role
+        FROM users WHERE github_login = 'alice'
+        """
     ).fetchone()
     device = conn.execute(
         "SELECT project_id, scopes FROM devices WHERE id = 1"
@@ -102,9 +105,21 @@ def test_additive_migration_preserves_and_scopes_existing_rows(tmp_path, monkeyp
     migration_count = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[
         0
     ]
+    project = conn.execute(
+        """
+        SELECT project_key, project_head_id FROM projects
+        WHERE id = ?
+        """,
+        (device["project_id"],),
+    ).fetchone()
+    task_table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tasks'"
+    ).fetchone()
     conn.close()
 
     assert user["public_id"]
+    assert user["github_username"] == "alice"
+    assert user["role"] == "developer"
     assert device["project_id"] == legacy_event["project_id"] == activity["project_id"]
     assert "events:ingest" in device["scopes"]
     assert legacy_event["actor_user_id"] == 1
@@ -112,10 +127,14 @@ def test_additive_migration_preserves_and_scopes_existing_rows(tmp_path, monkeyp
     assert ambiguous_event["project_id"] is None
     assert ambiguous_event["actor_user_id"] is None
     assert activity["sequence"] == 1
-    assert migration_count == 1
+    assert project["project_key"] == "personal-1"
+    assert project["project_head_id"] == 1
+    assert task_table is not None
+    assert migration_count == 2
 
     db.init_db()
     conn = db.get_connection()
     assert conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 3
     assert conn.execute("SELECT COUNT(*) FROM activity_event_stream").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 2
     conn.close()

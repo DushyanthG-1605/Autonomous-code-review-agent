@@ -23,103 +23,119 @@ def _apply_migrations(conn):
         )
         """
     )
-    migration_path = MIGRATIONS_DIR / "001_project_scoped_events.sql"
     conn.execute("BEGIN IMMEDIATE")
     try:
-        if conn.execute("SELECT 1 FROM schema_migrations WHERE version = 1").fetchone():
-            conn.commit()
-            return
+        applied = {
+            row["version"]
+            for row in conn.execute("SELECT version FROM schema_migrations")
+        }
+        if 1 not in applied:
+            migration_path = MIGRATIONS_DIR / "001_project_scoped_events.sql"
+            for statement in migration_path.read_text(encoding="utf-8").split(";"):
+                if statement.strip():
+                    conn.execute(statement)
 
-        for statement in migration_path.read_text(encoding="utf-8").split(";"):
-            if statement.strip():
-                conn.execute(statement)
+            users = conn.execute(
+                "SELECT id, github_login, display_name FROM users"
+            ).fetchall()
+            for user in users:
+                public_id = str(
+                    uuid.uuid5(uuid.NAMESPACE_URL, f"trac:user:{user['id']}")
+                )
+                project_id = str(
+                    uuid.uuid5(uuid.NAMESPACE_URL, f"trac:personal:{user['id']}")
+                )
+                conn.execute(
+                    "UPDATE users SET public_id = COALESCE(public_id, ?) WHERE id = ?",
+                    (public_id, user["id"]),
+                )
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO projects (id, slug, name, created_at)
+                    VALUES (?, ?, ?, datetime('now'))
+                    """,
+                    (
+                        project_id,
+                        f"personal-{user['id']}",
+                        f"{user['display_name']}'s workspace",
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO project_memberships
+                        (project_id, user_id, role, created_at)
+                    VALUES (?, ?, 'owner', datetime('now'))
+                    """,
+                    (project_id, user["id"]),
+                )
+                conn.execute(
+                    """
+                    UPDATE devices SET project_id = ?
+                    WHERE user_id = ? AND project_id IS NULL
+                    """,
+                    (project_id, user["id"]),
+                )
+                conn.execute(
+                    """
+                    UPDATE activity_events SET project_id = ?
+                    WHERE user_id = ? AND project_id IS NULL
+                    """,
+                    (project_id, user["id"]),
+                )
 
-        users = conn.execute(
-            "SELECT id, github_login, display_name FROM users"
-        ).fetchall()
-        for user in users:
-            public_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"trac:user:{user['id']}"))
-            project_id = str(
-                uuid.uuid5(uuid.NAMESPACE_URL, f"trac:personal:{user['id']}")
-            )
             conn.execute(
-                "UPDATE users SET public_id = COALESCE(public_id, ?) WHERE id = ?",
-                (public_id, user["id"]),
+                """
+                UPDATE events SET actor_user_id = (
+                    SELECT MIN(users.id) FROM users
+                    WHERE users.github_login = events.actor
+                       OR users.display_name = events.actor
+                )
+                WHERE actor_user_id IS NULL AND actor IS NOT NULL
+                  AND (
+                      SELECT COUNT(*) FROM users
+                      WHERE users.github_login = events.actor
+                         OR users.display_name = events.actor
+                  ) = 1
+                """
             )
             conn.execute(
                 """
-                INSERT OR IGNORE INTO projects (id, slug, name, created_at)
-                VALUES (?, ?, ?, datetime('now'))
-                """,
-                (
-                    project_id,
-                    f"personal-{user['id']}",
-                    f"{user['display_name']}'s workspace",
-                ),
+                UPDATE events SET project_id = (
+                    SELECT projects.id FROM projects
+                    JOIN project_memberships
+                      ON project_memberships.project_id = projects.id
+                    WHERE project_memberships.user_id = events.actor_user_id
+                    ORDER BY projects.slug LIMIT 1
+                )
+                WHERE project_id IS NULL AND actor_user_id IS NOT NULL
+                """
             )
             conn.execute(
                 """
-                INSERT OR IGNORE INTO project_memberships
-                    (project_id, user_id, role, created_at)
-                VALUES (?, ?, 'owner', datetime('now'))
-                """,
-                (project_id, user["id"]),
+                INSERT OR IGNORE INTO activity_event_stream
+                    (event_id, project_id, created_at)
+                SELECT event_id, project_id, received_at
+                FROM activity_events WHERE project_id IS NOT NULL
+                """
             )
             conn.execute(
                 """
-                UPDATE devices SET project_id = ?
-                WHERE user_id = ? AND project_id IS NULL
-                """,
-                (project_id, user["id"]),
-            )
-            conn.execute(
+                INSERT INTO schema_migrations (version, applied_at)
+                VALUES (1, datetime('now'))
                 """
-                UPDATE activity_events SET project_id = ?
-                WHERE user_id = ? AND project_id IS NULL
-                """,
-                (project_id, user["id"]),
             )
 
-        conn.execute(
-            """
-            UPDATE events SET actor_user_id = (
-                SELECT MIN(users.id) FROM users
-                WHERE users.github_login = events.actor
-                   OR users.display_name = events.actor
+        if 2 not in applied:
+            migration_path = MIGRATIONS_DIR / "002_projects_tasks_identity.sql"
+            for statement in migration_path.read_text(encoding="utf-8").split(";"):
+                if statement.strip():
+                    conn.execute(statement)
+            conn.execute(
+                """
+                INSERT INTO schema_migrations (version, applied_at)
+                VALUES (2, datetime('now'))
+                """
             )
-            WHERE actor_user_id IS NULL AND actor IS NOT NULL
-              AND (
-                  SELECT COUNT(*) FROM users
-                  WHERE users.github_login = events.actor
-                     OR users.display_name = events.actor
-              ) = 1
-            """
-        )
-        conn.execute(
-            """
-            UPDATE events SET project_id = (
-                SELECT projects.id FROM projects
-                JOIN project_memberships ON project_memberships.project_id = projects.id
-                WHERE project_memberships.user_id = events.actor_user_id
-                ORDER BY projects.slug LIMIT 1
-            )
-            WHERE project_id IS NULL AND actor_user_id IS NOT NULL
-            """
-        )
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO activity_event_stream
-                (event_id, project_id, created_at)
-            SELECT event_id, project_id, received_at
-            FROM activity_events WHERE project_id IS NOT NULL
-            """
-        )
-        conn.execute(
-            """
-            INSERT INTO schema_migrations (version, applied_at)
-            VALUES (1, datetime('now'))
-            """
-        )
         conn.commit()
     except Exception:
         conn.rollback()

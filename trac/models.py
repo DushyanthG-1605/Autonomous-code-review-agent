@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Dict, Literal, Optional
 from uuid import UUID
 
@@ -165,6 +165,58 @@ class CanonicalEvent(BaseModel):
         return metadata_model.model_validate(value, strict=True).model_dump(
             exclude_none=True
         )
+
+    @model_validator(mode="after")
+    def task_events_require_task_id(self):
+        if self.event_type.startswith("task.") and self.task_id is None:
+            raise ValueError("task events must reference a task")
+        return self
+
+
+class DevLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    github_username: str = Field(min_length=1, max_length=120)
+    project_id: UUID
+
+
+class ProjectCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=160)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    project_key: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$",
+    )
+
+
+class TaskCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=5000)
+    assignee_id: Optional[UUID] = None
+    priority: Literal["low", "medium", "high", "urgent"] = "medium"
+    due_date: Optional[date] = None
+
+
+class TaskPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=5000)
+    assignee_id: Optional[UUID] = None
+    status: Optional[
+        Literal["todo", "in_progress", "blocked", "in_review", "done"]
+    ] = None
+    priority: Optional[Literal["low", "medium", "high", "urgent"]] = None
+    progress_percent: Optional[int] = Field(
+        default=None, ge=0, le=100, strict=True
+    )
+    due_date: Optional[date] = None
+    note: Optional[str] = Field(default=None, max_length=2000)
 
 
 class SessionActivityData(StrictMetadata):
