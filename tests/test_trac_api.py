@@ -107,6 +107,48 @@ def second_device():
     return token
 
 
+def add_project_member(project_id, github_login, role="member"):
+    token = f"{github_login}-project-token"
+    public_id = str(uuid.uuid4())
+    conn = db.get_connection()
+    user = conn.execute(
+        """
+        INSERT INTO users
+            (github_login, github_username, display_name, created_at, public_id)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (github_login, github_login, github_login.title(), now_iso(), public_id),
+    )
+    user_id = user.lastrowid
+    conn.execute(
+        """
+        INSERT INTO project_memberships (project_id, user_id, role, created_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (project_id, user_id, role, now_iso()),
+    )
+    conn.execute(
+        """
+        INSERT INTO devices
+            (user_id, token_hash, label, created_at, project_id, scopes)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            user_id,
+            hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            "test member device",
+            now_iso(),
+            project_id,
+            '["events:read","events:ingest"]'
+            if role == "member"
+            else '["events:read"]',
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return token, public_id
+
+
 def activity_event(event_id="01JGFJJZ00A1B2C3D4E5F6G7H8", **overrides):
     event = {
         "event_id": event_id,
@@ -125,7 +167,7 @@ def canonical_event(**overrides):
     event = {
         "event_id": str(uuid.uuid4()),
         "schema_version": 2,
-        "event_type": "task.started",
+        "event_type": "session.started",
         "source": "skill",
         "occurred_at": datetime.now(timezone.utc).isoformat(),
         "metadata": {},
@@ -346,11 +388,26 @@ def test_legacy_endpoint_rejects_sensitive_metadata(api, device):
 
 
 def test_canonical_event_uses_credential_identity_and_project(api, device):
-    token, _ = device
+    token, device_id = device
+    task_id = str(uuid.uuid4())
+    conn = db.get_connection()
+    credential = conn.execute(
+        "SELECT user_id, project_id FROM devices WHERE id = ?", (device_id,)
+    ).fetchone()
+    conn.execute(
+        """
+        INSERT INTO tasks
+            (id, project_id, title, created_at, updated_at)
+        VALUES (?, ?, 'Identity test task', ?, ?)
+        """,
+        (task_id, credential["project_id"], now_iso(), now_iso()),
+    )
+    conn.commit()
+    conn.close()
     event = canonical_event(
         project_id=str(uuid.uuid4()),
         actor_id=str(uuid.uuid4()),
-        task_id=str(uuid.uuid4()),
+        task_id=task_id,
         event_type="task.progress",
         metadata={"progress": 35},
     )
@@ -369,7 +426,14 @@ def test_canonical_event_uses_credential_identity_and_project(api, device):
     assert stored.status_code == 200
     assert stored.json()["project_id"] != event["project_id"]
     assert stored.json()["actor_id"] != event["actor_id"]
-    assert stored.json()["task_id"] == event["task_id"]
+    assert stored.json()["task_id"] == task_id
+    task = api.get(
+        f"/v1/tasks/{task_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()
+    assert task["progress_percent"] == 35
+    assert task["progress_is_estimate"] is True
+    assert task["updates"][0]["event_id"] == event["event_id"]
 
 
 @pytest.mark.parametrize(
@@ -686,3 +750,368 @@ def test_stream_route_precedes_parameterized_event_route():
     ]
 
     assert paths == ["/api/events/stream", "/api/events/{event_id}"]
+
+
+def test_project_creation_issues_project_scoped_hashed_credential(api, device):
+    token, _ = device
+    response = api.post(
+        "/v1/projects",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "name": "New Engineering Project",
+            "description": "A project created through the API",
+            "project_key": "new-engineering-project",
+        },
+    )
+
+    assert response.status_code == 201
+    project = response.json()
+    assert project["project_key"] == "new-engineering-project"
+    assert project["project_head_id"]
+    assert project["device_token"]
+    headers = {"Authorization": f"Bearer {project['device_token']}"}
+    loaded = api.get(f"/v1/projects/{project['id']}", headers=headers)
+    assert loaded.status_code == 200
+    assert loaded.json()["project_head_id"] == project["project_head_id"]
+    listed = api.get(
+        "/v1/projects", headers={"Authorization": f"Bearer {token}"}
+    ).json()
+    assert project["id"] in {item["id"] for item in listed}
+
+    conn = db.get_connection()
+    stored_hash = conn.execute(
+        "SELECT token_hash FROM devices WHERE project_id = ?",
+        (project["id"],),
+    ).fetchone()["token_hash"]
+    conn.close()
+    assert stored_hash == hashlib.sha256(project["device_token"].encode()).hexdigest()
+
+
+def test_task_assignment_member_access_and_project_head_authorization(api, device):
+    owner_token, device_id = device
+    conn = db.get_connection()
+    project_id = conn.execute(
+        "SELECT project_id FROM devices WHERE id = ?", (device_id,)
+    ).fetchone()["project_id"]
+    conn.close()
+    member_token, member_id = add_project_member(project_id, "assigned-member")
+    outsider_token, _ = add_project_member(project_id, "other-member")
+    owner_headers = {"Authorization": f"Bearer {owner_token}"}
+    member_headers = {"Authorization": f"Bearer {member_token}"}
+    outsider_headers = {"Authorization": f"Bearer {outsider_token}"}
+
+    created = api.post(
+        f"/v1/projects/{project_id}/tasks",
+        headers=owner_headers,
+        json={"title": "Implement task lifecycle", "assignee_id": member_id},
+    )
+    assert created.status_code == 201
+    task = created.json()
+    assert task["status"] == "todo"
+    assert task["progress_percent"] == 0
+    assert task["progress_is_estimate"] is False
+    assert task["assignee_id"] == member_id
+
+    assert api.get(
+        f"/v1/tasks/{task['id']}", headers=member_headers
+    ).status_code == 200
+    assert api.get("/v1/me/tasks", headers=member_headers).json()[0]["id"] == task["id"]
+    assert api.get(
+        f"/v1/projects/{project_id}/tasks", headers=member_headers
+    ).json()[0]["id"] == task["id"]
+    assert api.get(
+        f"/v1/tasks/{task['id']}", headers=outsider_headers
+    ).status_code == 404
+    assert api.patch(
+        f"/v1/tasks/{task['id']}",
+        headers=outsider_headers,
+        json={"status": "in_progress"},
+    ).status_code == 404
+    assert api.post(
+        f"/v1/projects/{project_id}/tasks",
+        headers=member_headers,
+        json={"title": "Unauthorized task"},
+    ).status_code == 403
+    assert api.patch(
+        f"/v1/tasks/{task['id']}",
+        headers=member_headers,
+        json={"title": "Member cannot rename"},
+    ).status_code == 403
+
+    updated = api.patch(
+        f"/v1/tasks/{task['id']}",
+        headers=member_headers,
+        json={"status": "in_progress", "progress_percent": 45, "note": "Started"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["status"] == "in_progress"
+    assert updated.json()["progress_percent"] == 45
+    assert updated.json()["progress_is_estimate"] is False
+    details = api.get(f"/v1/tasks/{task['id']}", headers=member_headers).json()
+    assert details["updates"][0]["note"] == "Started"
+    assert details["updates"][0]["event_id"] is None
+    overview = api.get(
+        f"/v1/projects/{project_id}/overview", headers=owner_headers
+    ).json()
+    assert overview["total_tasks"] == 1
+    assert overview["task_counts"]["in_progress"] == 1
+
+
+def test_task_event_updates_state_history_and_estimate_idempotently(api, device):
+    owner_token, device_id = device
+    conn = db.get_connection()
+    project_id = conn.execute(
+        "SELECT project_id FROM devices WHERE id = ?", (device_id,)
+    ).fetchone()["project_id"]
+    conn.close()
+    member_token, member_id = add_project_member(project_id, "task-agent")
+    task = api.post(
+        f"/v1/projects/{project_id}/tasks",
+        headers={"Authorization": f"Bearer {owner_token}"},
+        json={"title": "Run a task event", "assignee_id": member_id},
+    ).json()
+    member_headers = {"Authorization": f"Bearer {member_token}"}
+    started = canonical_event(event_type="task.started", task_id=task["id"])
+    started_response = api.post("/v1/events", headers=member_headers, json=started)
+    assert started_response.json()["accepted"] == 1
+    in_progress = api.get(
+        f"/v1/tasks/{task['id']}", headers=member_headers
+    ).json()
+    assert in_progress["status"] == "in_progress"
+    assert in_progress["updates"][0]["event_id"] == started["event_id"]
+
+    event = canonical_event(
+        event_type="task.progress",
+        task_id=task["id"],
+        actor_id=str(uuid.uuid4()),
+        project_id=str(uuid.uuid4()),
+        metadata={"progress": 63},
+    )
+
+    first = api.post("/v1/events", headers=member_headers, json=event)
+    duplicate = api.post("/v1/events", headers=member_headers, json=event)
+    assert first.json()["accepted"] == 1
+    assert duplicate.json()["duplicates"] == 1
+    completed = canonical_event(
+        event_type="task.completed",
+        task_id=task["id"],
+        metadata={"outcome": "done"},
+    )
+    assert (
+        api.post("/v1/events", headers=member_headers, json=completed).json()[
+            "accepted"
+        ]
+        == 1
+    )
+    details = api.get(f"/v1/tasks/{task['id']}", headers=member_headers).json()
+    assert details["status"] == "done"
+    assert details["progress_percent"] == 100
+    assert details["progress_is_estimate"] is False
+    assert len(details["updates"]) == 3
+    assert {update["event_id"] for update in details["updates"]} == {
+        started["event_id"],
+        event["event_id"],
+        completed["event_id"],
+    }
+    progress_update = next(
+        update
+        for update in details["updates"]
+        if update["event_id"] == event["event_id"]
+    )
+    assert progress_update["progress_percent"] == 63
+    assert progress_update["progress_is_estimate"] is True
+    assert progress_update["actor_id"] == member_id
+    stored = api.get(
+        f"/v1/events/{event['event_id']}", headers=member_headers
+    ).json()
+    assert stored["actor_id"] == member_id
+
+
+def test_task_event_requires_existing_authorized_task_and_task_id(
+    api, device, second_device
+):
+    owner_token, device_id = device
+    conn = db.get_connection()
+    project_id = conn.execute(
+        "SELECT project_id FROM devices WHERE id = ?", (device_id,)
+    ).fetchone()["project_id"]
+    conn.close()
+    member_token, member_id = add_project_member(project_id, "task-member")
+    task = api.post(
+        f"/v1/projects/{project_id}/tasks",
+        headers={"Authorization": f"Bearer {owner_token}"},
+        json={"title": "Assigned task", "assignee_id": member_id},
+    ).json()
+    unauthorized = canonical_event(
+        event_type="task.started", task_id=task["id"], metadata={}
+    )
+    assert api.post(
+        "/v1/events",
+        headers={"Authorization": f"Bearer {second_device}"},
+        json=unauthorized,
+    ).status_code == 404
+
+    unassigned_token, _ = add_project_member(project_id, "unassigned-member")
+    denied = canonical_event(
+        event_type="task.started", task_id=task["id"], metadata={}
+    )
+    assert api.post(
+        "/v1/events",
+        headers={"Authorization": f"Bearer {unassigned_token}"},
+        json=denied,
+    ).status_code == 403
+
+    missing_task = canonical_event(event_type="task.started", metadata={})
+    assert api.post(
+        "/v1/events",
+        headers={"Authorization": f"Bearer {member_token}"},
+        json=missing_task,
+    ).status_code == 422
+
+
+def test_task_progress_validation_and_cross_project_isolation(
+    api, device, second_device
+):
+    owner_token, device_id = device
+    conn = db.get_connection()
+    project_id = conn.execute(
+        "SELECT project_id FROM devices WHERE id = ?", (device_id,)
+    ).fetchone()["project_id"]
+    conn.close()
+    task = api.post(
+        f"/v1/projects/{project_id}/tasks",
+        headers={"Authorization": f"Bearer {owner_token}"},
+        json={"title": "Private task"},
+    ).json()
+    headers = {"Authorization": f"Bearer {owner_token}"}
+    assert api.patch(
+        f"/v1/tasks/{task['id']}",
+        headers=headers,
+        json={"progress_percent": 101},
+    ).status_code == 422
+    assert api.patch(
+        f"/v1/tasks/{task['id']}",
+        headers=headers,
+        json={"progress_percent": "45"},
+    ).status_code == 422
+    assert (
+        api.patch(
+            f"/v1/tasks/{task['id']}", headers=headers, json={"status": "finished"}
+        ).status_code
+        == 422
+    )
+    other_headers = {"Authorization": f"Bearer {second_device}"}
+    assert (
+        api.get(f"/v1/tasks/{task['id']}", headers=other_headers).status_code == 404
+    )
+    assert api.patch(
+        f"/v1/tasks/{task['id']}",
+        headers=other_headers,
+        json={"status": "blocked"},
+    ).status_code == 404
+
+
+def test_members_only_see_own_or_assigned_activity(api, device):
+    owner_token, device_id = device
+    conn = db.get_connection()
+    project_id = conn.execute(
+        "SELECT project_id FROM devices WHERE id = ?", (device_id,)
+    ).fetchone()["project_id"]
+    conn.close()
+    member_token, member_id = add_project_member(project_id, "activity-member")
+    task = api.post(
+        f"/v1/projects/{project_id}/tasks",
+        headers={"Authorization": f"Bearer {owner_token}"},
+        json={"title": "Visible assigned task", "assignee_id": member_id},
+    ).json()
+    owner_headers = {"Authorization": f"Bearer {owner_token}"}
+    member_headers = {"Authorization": f"Bearer {member_token}"}
+    hidden = canonical_event()
+    visible = canonical_event(event_type="task.started", task_id=task["id"])
+    assert (
+        api.post("/v1/events", headers=owner_headers, json=hidden).status_code == 202
+    )
+    assert (
+        api.post("/v1/events", headers=owner_headers, json=visible).status_code == 202
+    )
+
+    visible_ids = {
+        event["event_id"]
+        for event in api.get("/v1/events", headers=member_headers).json()
+    }
+    assert visible["event_id"] in visible_ids
+    assert hidden["event_id"] not in visible_ids
+    assert api.get(
+        f"/v1/events/{hidden['event_id']}", headers=member_headers
+    ).status_code == 404
+    assert api.get(
+        f"/v1/projects/{project_id}/activity", headers=member_headers
+    ).status_code == 403
+    assert api.get(
+        f"/v1/projects/{project_id}/activity", headers=owner_headers
+    ).status_code == 200
+
+    async def stream_member_activity():
+        request = SimpleNamespace(
+            is_disconnected=lambda: asyncio.sleep(0, result=False)
+        )
+        response = await stream_activity_events(
+            request,
+            authorization=member_headers["Authorization"],
+            last_event_id="0",
+        )
+        iterator = response.body_iterator
+        assert await iterator.__anext__() == "retry: 3000\n\n"
+        frame = await asyncio.wait_for(iterator.__anext__(), timeout=3)
+        await iterator.aclose()
+        return frame
+
+    frame = asyncio.run(stream_member_activity())
+    assert visible["event_id"] in frame
+    assert hidden["event_id"] not in frame
+
+
+def test_development_login_is_opt_in_and_never_works_in_production(
+    api, device, monkeypatch
+):
+    _token, device_id = device
+    conn = db.get_connection()
+    credential = conn.execute(
+        """
+        SELECT users.github_username, users.github_login, devices.project_id
+        FROM devices JOIN users ON users.id = devices.user_id
+        WHERE devices.id = ?
+        """,
+        (device_id,),
+    ).fetchone()
+    conn.close()
+    payload = {
+        "github_username": credential["github_username"] or credential["github_login"],
+        "project_id": credential["project_id"],
+    }
+    assert api.post("/v1/dev/login", json=payload).status_code == 404
+
+    monkeypatch.setenv("TRAC_ENV", "development")
+    monkeypatch.setenv("TRAC_DEV_AUTH_ENABLED", "true")
+    login = api.post("/v1/dev/login", json=payload)
+    assert login.status_code == 200
+    development_token = login.json()["access_token"]
+    assert api.get(
+        "/v1/projects",
+        headers={"Authorization": f"Bearer {development_token}"},
+    ).status_code == 200
+    conn = db.get_connection()
+    credential = conn.execute(
+        "SELECT token_hash, auth_mode FROM devices WHERE token_hash = ?",
+        (hashlib.sha256(development_token.encode()).hexdigest(),),
+    ).fetchone()
+    conn.close()
+    assert credential["auth_mode"] == "development"
+    assert credential["token_hash"] != development_token
+
+    monkeypatch.setenv("TRAC_ENV", "production")
+    assert api.post("/v1/dev/login", json=payload).status_code == 404
+    assert api.get(
+        "/v1/projects",
+        headers={"Authorization": f"Bearer {development_token}"},
+    ).status_code == 401

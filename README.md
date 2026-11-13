@@ -26,7 +26,9 @@ the SSE stream. The dashboard's **Set API token** button stores the token only
 in the current browser session. Event batches are limited to 100 records and
 256 KB, with a per-device limit of 120 requests per minute. See
 [`docs/TRAC_EVENT_CONTRACT.md`](docs/TRAC_EVENT_CONTRACT.md) for the version-2
-contract, compatibility behavior, and stream protocol.
+contract, compatibility behavior, and stream protocol. Project/task APIs,
+member permissions, task progress estimates, and the opt-in local development
+login are described in [`docs/TRAC_PROJECTS_TASKS.md`](docs/TRAC_PROJECTS_TASKS.md).
 
 The review reporter uses `TRAC_EVENTS_URL` and `TRAC_API_TOKEN`; configure the
 token through the process environment rather than source code:

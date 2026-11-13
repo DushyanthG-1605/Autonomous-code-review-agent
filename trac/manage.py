@@ -5,30 +5,52 @@ import secrets
 import sqlite3
 import sys
 import uuid
+from typing import Optional
 
 from trac.db import get_connection, init_db
 from trac.models import now_iso
 
 
-def create_user(github_login: str) -> str:
+def create_user(
+    github_login: str,
+    display_name: Optional[str] = None,
+    email: Optional[str] = None,
+) -> str:
     token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
     conn = get_connection()
     try:
         cursor = conn.execute(
             """
-            INSERT INTO users (github_login, display_name, created_at, public_id)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO users
+                (
+                    github_login, github_username, display_name, email,
+                    created_at, public_id
+                )
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (github_login, github_login, now_iso(), str(uuid.uuid4())),
+            (
+                github_login,
+                github_login,
+                display_name or github_login,
+                email,
+                now_iso(),
+                str(uuid.uuid4()),
+            ),
         )
         project_id = str(uuid.uuid4())
         conn.execute(
-            "INSERT INTO projects (id, slug, name, created_at) VALUES (?, ?, ?, ?)",
+            """
+            INSERT INTO projects
+                (id, slug, name, project_key, project_head_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
             (
                 project_id,
                 f"personal-{cursor.lastrowid}",
                 f"{github_login}'s workspace",
+                f"personal-{cursor.lastrowid}",
+                cursor.lastrowid,
                 now_iso(),
             ),
         )
@@ -97,8 +119,12 @@ def create_project(slug: str, name: str, owner_login: str) -> str:
             raise ValueError(f"Unknown user: {owner_login}")
         project_id = str(uuid.uuid4())
         conn.execute(
-            "INSERT INTO projects (id, slug, name, created_at) VALUES (?, ?, ?, ?)",
-            (project_id, slug, name, now_iso()),
+            """
+            INSERT INTO projects
+                (id, slug, name, project_key, project_head_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (project_id, slug, name, slug, owner["id"], now_iso()),
         )
         conn.execute(
             """
@@ -169,6 +195,8 @@ def main(argv=None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     create_parser = subparsers.add_parser("create-user")
     create_parser.add_argument("github_login")
+    create_parser.add_argument("--display-name")
+    create_parser.add_argument("--email")
     project_parser = subparsers.add_parser("create-project")
     project_parser.add_argument("slug")
     project_parser.add_argument("name")
@@ -185,7 +213,9 @@ def main(argv=None) -> int:
     if args.command in {"create-user", "create-project", "add-project-member"}:
         try:
             if args.command == "create-user":
-                token = create_user(args.github_login)
+                token = create_user(
+                    args.github_login, args.display_name, args.email
+                )
             elif args.command == "create-project":
                 token = create_project(args.slug, args.name, args.owner_login)
             else:

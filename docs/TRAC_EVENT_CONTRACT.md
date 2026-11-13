@@ -1,7 +1,8 @@
 # TRAC Event Contract
 
-Phase 2 defines a strict version-2 event contract, project-scoped device
-credentials, authenticated reads, and a durable server-sent event stream.
+Phases 2–3 define a strict version-2 event contract, project-scoped device
+credentials, project/task authorization, and a durable server-sent event
+stream.
 
 ## Authentication and project access
 
@@ -18,6 +19,12 @@ Revoked devices, missing project membership, and missing scopes are denied.
 `project_id` and `actor_id` supplied in a request are accepted only as
 compatibility fields and are ignored; the credential determines both identities.
 
+Project heads can read project activity. Members can read only their own
+activity or activity attached to tasks assigned to them; task access is likewise
+limited to the project head and assigned member. Project/task API details and
+development login are documented in
+[`TRAC_PROJECTS_TASKS.md`](TRAC_PROJECTS_TASKS.md).
+
 Create and manage users, projects, and device tokens with:
 
 ```text
@@ -29,6 +36,12 @@ python -m trac.manage revoke-device <device_id>
 
 Owners and members receive `events:read` and `events:ingest`; viewers receive
 `events:read` only. Device credentials are printed once by the management CLI.
+
+An optional local username-based development login is available only when both
+`TRAC_ENV=development` and `TRAC_DEV_AUTH_ENABLED=true` are set. It issues a
+hashed project-scoped credential for an existing user. `TRAC_ENV=production`
+disables the login endpoint and rejects previously issued development
+credentials. This no-password mechanism is for trusted local development only.
 
 ## Version-2 event schema
 
@@ -55,6 +68,10 @@ JSON fields outside the schema are rejected.
 The server adds `received_at` and derives the persisted project and actor from
 the authenticated device, not from body claims. Reusing an event ID within a
 project is idempotent and produces no second event or stream record.
+For task lifecycle event types, `task_id` is required and must identify an
+existing task in the credential's project. Only that project's head or the
+assigned member can report against it. Accepted task-linked events create task
+history in the same transaction as the event and stream record.
 
 ### Supported event types and metadata
 
@@ -80,6 +97,12 @@ allowlists, the API rejects forbidden field names and recognizable secret
 patterns. Do not place free-form source text in fields intended for structured
 activity.
 
+`task.progress.metadata.progress` is an agent/event-reported percentage and is
+stored on the task with `progress_is_estimate=true`; TRAC does not infer exact
+progress from elapsed time or commit counts. An explicit successful
+`task.completed` event sets state to `done` and progress to 100. Direct human
+task API progress reports are stored with `progress_is_estimate=false`.
+
 ## API
 
 | Method and path | Description |
@@ -92,6 +115,13 @@ activity.
 | `GET /api/events/{integer_id}` | Authenticated, project-scoped legacy detail route. |
 | `POST /api/events` | Authenticated compatibility ingestion for the existing review reporter. Body and response retain the legacy event shape; caller-supplied actor identity is ignored. |
 | `GET /api/events/stream` | Compatibility alias for the authenticated SSE stream. |
+| `GET /v1/projects`, `POST /v1/projects`, `GET /v1/projects/{id}` | Project membership and creation; project creation returns a project-scoped token once. |
+| `GET/POST /v1/projects/{id}/tasks` | Authorized task listing and project-head task creation. |
+| `GET/PATCH /v1/tasks/{id}` | Read task/history or update it as project head/assignee. |
+| `GET /v1/me/tasks` | Assigned tasks in the current credential's project. |
+| `GET /v1/projects/{id}/activity` | Project-head-only activity view. |
+| `GET /v1/projects/{id}/overview` | Project-head-only task counts. |
+| `POST /v1/dev/login` | Optional local login, disabled unless explicitly enabled for development. |
 
 Successful POST responses use the existing collector-compatible shape:
 
@@ -149,11 +179,12 @@ project feed, and uses the SSE cursor to resume.
 
 ## Database migration
 
-Startup applies the additive `trac/migrations/001_project_scoped_events.sql`
-migration once, tracked in `schema_migrations`. It adds public actor IDs,
-projects, memberships, device project/scopes, event project references, and the
-durable stream sequence without deleting existing rows. Existing users receive
-a deterministic personal project and existing devices are assigned to it.
-Legacy feed rows are associated only when an actor can be matched to an
-existing user; unmatched historical rows remain unscoped and are not exposed
-through authenticated project feeds.
+Startup applies the additive
+`trac/migrations/001_project_scoped_events.sql` and
+`trac/migrations/002_projects_tasks_identity.sql` migrations tracked in
+`schema_migrations`. Migration 001 adds public actor IDs, projects,
+memberships, device project/scopes, event project references, and the durable
+stream sequence. Migration 002 adds optional user email/GitHub identity,
+project key/description/head, task and task-update tables, and development
+credential mode. Existing project slugs and owner memberships are used to
+backfill keys and heads; existing event and review records are preserved.

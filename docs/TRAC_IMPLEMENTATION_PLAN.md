@@ -1,102 +1,146 @@
 # TRAC Implementation Plan
 
-This plan describes a dependency-ordered path from the audited repository to the next AI-native engineering intelligence release. It is a proposal for approval, not authorization to begin implementation. Keep the current FastAPI, SQLite, collector, and dashboard during the early phases; avoid a framework rewrite.
+This dependency-ordered roadmap reflects work completed through Phase 3. It
+preserves FastAPI, SQLite, the collector, and the dashboard; no framework
+rewrite is planned. Phases 4–7 are future work and require approval before
+implementation.
 
-## Phase 1 — Canonical project, identity, and event contract
+## Phase 1 — Architecture audit and stabilization (complete)
 
-**Depends on:** Architecture approval; none of the later phases.
+- Inventory existing routes, storage, authentication, integrations, dashboard,
+  and tests.
+- Record the baseline architecture and fix only confirmed run-blocking defects.
+- Preserve existing dashboard branding and working review behavior.
 
-- Define project/workspace ownership, user identity, device/agent identity, task identity, event ID/idempotency scope, timestamps, and event-versioning rules.
-- Align the accepted event types and field allowlists across `trac/models.py`, the collector CLI, skill instructions, review reporter, and dashboard. Decide whether progress and test events are new event types or versioned variants of existing events.
-- Establish explicit data classification, maximum lengths, privacy allowlists, and event actor attribution.
-- Publish representative request/response examples and compatibility rules before changing ingestion.
+**Evidence:** `docs/TRAC_ARCHITECTURE.md`; baseline Python, JavaScript, and
+collector/API checks.
 
-**Exit gate:** Contract reviewed; producers and consumers map to one versioned schema; unknown versions/types and invalid fields have explicit behavior.
+## Phase 2 — Universal event ingestion and real-time streaming (complete)
 
-## Phase 2 — Authorization, tenant boundaries, and privacy controls
+- Define strict version-2 event and metadata allowlists; preserve version-1
+  collector and review-reporter compatibility.
+- Require project-scoped, hashed device credentials and enforce event read and
+  ingest scopes.
+- Add idempotent persistence and durable SQLite event-stream replay with SSE
+  IDs, reconnect cursors, heartbeats, and authenticated access.
+- Remove dashboard mock-event fallback and use authenticated streaming.
 
-**Depends on:** Phase 1 identity/project model.
+**Migration:** Additive migration `001_project_scoped_events.sql`; preserve
+existing rows and backfill only unambiguous ownership.
 
-- Scope devices and all event reads/writes/streams to an authorized project. Define administrative bootstrap and revocation without relying on public endpoints.
-- Protect or retire the legacy `/api/events` paths; preserve review reporting through an authenticated compatibility path during transition.
-- Enforce server-side allowlists and value bounds, review secret redaction, constrain query limits, enable SQLite foreign-key enforcement, and make throttling behavior explicit for multi-worker use.
-- Define retention, export/inspection, consent/pause/revoke behavior, and auditability.
+**Evidence:** `docs/TRAC_EVENT_CONTRACT.md`; ingestion, auth, privacy,
+idempotency, SSE, and collector E2E tests.
 
-**Migration strategy:** Additive schema changes first; backfill project ownership only where an explicit mapping exists. Quarantine ambiguous historical rows rather than assigning a guessed owner. Keep legacy routes behind the same authorization layer before removing callers.
+## Phase 3 — Projects, tasks, and developer identity (complete)
 
-**Exit gate:** Tests prove cross-project isolation, revoked-device denial, privacy rejection/redaction, and bounded request/query behavior.
+- Add project descriptions/keys/heads, optional email and GitHub username,
+  users' global role, task status/priority/progress, assignment, and task update
+  history.
+- Add project/task/me/activity/overview APIs with project-head and
+  assigned-member authorization.
+- Link version-2 task events to real tasks and atomically update task state and
+  history. Label event-reported percentages as estimates; never infer exact
+  progress from elapsed time or commit count.
+- Add opt-in local development login that is rejected in production.
 
-## Phase 3 — Collector, skill, and agent connection lifecycle
+**Migration:** Additive migration `002_projects_tasks_identity.sql`; backfill
+project keys from slugs, project heads from owner memberships, and GitHub
+usernames from existing logins. Do not delete historical activity.
 
-**Depends on:** Phases 1 and 2.
+**Evidence:** `docs/TRAC_PROJECTS_TASKS.md`; project/task authorization,
+event-linking, estimate, and migration tests. Version-1 task events remain
+unlinked because that envelope has no task UUID.
 
-- Add secure pairing-code issuance/claiming (short-lived, single-use, hashed at rest) and a server-owned connection/device lifecycle.
-- Make consent explicit and ensure selected categories govern collection and server authorization.
-- Keep local queue/retry/pause behavior; ensure statuses expose failed auth, malformed events, and rejected records without leaking secrets.
-- Implement agent-specific adapters only at the collector boundary; they should emit the canonical contract rather than inventing event variants.
+## Phase 4 — Producer alignment and connection lifecycle
 
-**Migration strategy:** Existing token login remains temporarily supported for local development and existing collectors. Provide a documented token-to-pairing transition and a rollback window. Do not silently rotate or invalidate existing device tokens.
+**Depends on:** Phases 2 and 3.
 
-**Exit gate:** End-to-end tests cover pairing expiry/replay, user cancellation, revoke/pause, reconnect, offline queueing, and approved field collection.
+- Align collector, skill, CLI, MCP adapters, and review reporter with the
+  version-2 contract where structured task IDs are available.
+- Introduce secure, short-lived, single-use device pairing only if deployment
+  needs a user-friendly alternative to project-scoped token bootstrap.
+- Preserve local queue/retry/pause behavior; expose authorization and
+  validation failures without leaking secrets.
+- Make consent explicit for collection categories and ensure the collector
+  sends only allowlisted metadata.
 
-## Phase 4 — Durable event persistence and compatibility mapping
+**Migration:** Keep version-1 ingestion and management-issued tokens during
+transition. Roll out producer updates by source, compare accepted/rejected and
+duplicate counts, and retain a rollback path.
 
-**Depends on:** Phases 1 and 2; collector integrations in Phase 3 can use this once stable.
+**Exit gate:** Integration checks cover task-ID validation, consent/pause,
+offline retries, credential revoke, pairing replay/expiry if implemented, and
+privacy sentinels.
 
-- Introduce versioned database migrations and normalized project/user/device/task/event relationships with explicit indexes and retention strategy.
-- Use owner/project-scoped idempotency keys and transactions covering persistence plus any outbox record.
-- Preserve the existing review `events` contract through an adapter while moving new producers to the canonical event store.
-- Decide whether SQLite remains sufficient for the MVP; change the database only when concurrency/availability requirements justify it.
+## Phase 5 — Storage and operational hardening
 
-**Migration strategy:** Create additive tables/columns and indices; backfill only unambiguous records; dual-write or adapter-write for a measured transition period; compare counts and IDs; switch reads behind a reversible feature/config gate; retain a verified backup before any destructive cleanup.
+**Depends on:** Phases 2–4.
 
-**Exit gate:** Migration runs on a copy of existing data, is repeatable or safely fails on replay, and compatibility tests verify old and new writers/readers.
+- Define event/task retention, export, backup/restore, and migration runbooks.
+- Measure SQLite write contention and stream query behavior under expected
+  single-host load; select shared storage or a broker only if deployment needs
+  multi-host delivery.
+- If an external publisher is added, introduce a transactional outbox so
+  database commit and publish intent cannot diverge.
+- Make rate limiting and operational diagnostics appropriate for the selected
+  deployment topology.
 
-## Phase 5 — Authenticated real-time delivery
+**Migration:** Add schema changes only through additive, versioned migrations;
+test upgrades against a copy of existing user data and prove rollback/restore
+before destructive cleanup.
 
-**Depends on:** Phase 2 authorization and Phase 4 durable event persistence.
+**Exit gate:** Backup restore, migration replay, bounded query/stream behavior,
+and documented capacity/availability limits are verified.
 
-- Publish events only after the database transaction commits, preferably via a transactional outbox.
-- Implement authenticated/project-scoped SSE with event IDs, reconnect cursors, heartbeats, disconnect handling, bounded buffering, and replay/retention semantics.
-- Keep polling as a temporary fallback until SSE delivery and reconnect behavior are measured.
+## Phase 6 — Dashboard projection and task workflows
 
-**Migration strategy:** Retain the current heartbeat endpoint as a compatibility response only until clients move. Introduce the real stream under tested authorization; do not broadcast from process-local in-memory state when deployment may use multiple workers.
+**Depends on:** Phases 2, 3, and 5.
 
-**Exit gate:** Integration tests prove newly accepted events arrive once in-order within the stated bounds, reconnect replays safely, cross-project subscriptions are denied, and disconnected clients release resources.
+- Add task/project views and derive overview metrics from authorized task and
+  event records, not fixed counts or event counts presented as unique tasks.
+- Keep the TRAC logo, favicon, cyan accent, theme, sidebar, and existing
+  dashboard behavior.
+- Provide clear loading, empty, offline, and unauthorized states; never render
+  synthetic events as real activity.
+- Safely render task histories and progress estimates with project/member
+  filters.
 
-## Phase 6 — Dashboard projection and removal of demo ambiguity
+**Migration:** Keep the existing authenticated event API and stream while
+introducing task projections incrementally. Verify member and head visibility
+with test accounts before displaying multi-user activity.
 
-**Depends on:** Phase 1 contract, Phase 4 read model, and Phase 5 live delivery; authorization from Phase 2 is required before displaying real multi-user data.
+**Exit gate:** Browser checks cover project/task workflows, live updates,
+permissions, theme persistence, loading/empty/offline states, and no mock data
+in production mode.
 
-- Keep the current logo, favicon, layout, CSS/theme, and responsive behavior; update data projection rather than replacing the frontend stack.
-- Replace hardcoded counts/statuses and API-failure demo records with explicit loading, empty, offline, and development-only fixture modes.
-- Derive active people/tasks, blockers, completion, charts, current work, and recent activity from canonical task/event state, avoiding event counts that masquerade as unique task counts.
-- Render unknown event types safely, show sanitized event details, add member/type/agent/time filters, and support pause-feed as UI rendering pause only.
+## Phase 7 — GitHub/CI adapters, rollout, and compatibility retirement
 
-**Migration strategy:** Keep one dashboard client against a compatibility API while read models are introduced. Compare new projections to fixture and production-like data; switch one panel at a time. Never mix seed fixtures with production records.
+**Depends on:** Phases 1–6.
 
-**Exit gate:** Browser smoke checks cover Overview, Live Activity, Integrate, Connections, theme persistence, loading/empty/offline states, unknown event types, and live updates without reload.
+- Add GitHub App/webhook and CI adapters with signature verification,
+  least-privilege permissions, consent, and source-specific idempotency.
+- Keep PR review findings distinct from engineering progress.
+- Run source adapters in a non-mutating validation mode, then enable them
+  incrementally with received/stored/deduplicated metrics.
+- Retire compatibility routes or version-1 payloads only after producer and
+  consumer usage confirms they are unused.
 
-## Phase 7 — GitHub/CI sources, rollout, and legacy retirement
+**Migration:** Preserve the review reporter contract and event IDs during
+rollout. Keep feature/configuration rollback controls and verify data recovery.
 
-**Depends on:** Phases 1–6, especially authorization, durable persistence, and event delivery.
-
-- Add GitHub App/webhook and CI adapters with least-privilege credentials, signature verification, deduplication, and source-specific consent/permissions.
-- Preserve the current PR review agent as a distinct source; do not conflate AI review scoring with work progress.
-- Add operational diagnostics, migrations/runbook, backup/restore validation, rate/retention metrics, and integration contract tests.
-- Remove compatibility routes, legacy schema, and fallback paths only after usage evidence confirms no remaining producers or readers.
-
-**Migration strategy:** Roll out adapters behind configuration flags; validate signatures and event identity in a non-mutating mode; enable one source at a time; compare received/stored/deduplicated counts; maintain rollback switches and the old API during a defined deprecation interval.
-
-**Exit gate:** Source integrations are idempotent and authorized; rollback and data recovery have been tested; no production view depends on demo records or unauthenticated routes.
+**Exit gate:** Integrations are authenticated and replay-safe; rollback and
+restore are tested; production views contain no demo records or unauthorized
+events.
 
 ## Cross-phase quality gates
 
-- Keep the existing Python, Vitest, and collector end-to-end suites green; add tests at contract and authorization boundaries before changing producers.
-- Use additive schema migration and explicit historical-data mapping; preserve review events and collector queues during transition.
-- Do not add productivity scoring, attendance tracking, prompt/source capture, or hidden collection.
-- No production deployment until the unauthenticated legacy paths and project scoping are resolved.
-
-## Approval boundary
-
-No phases in this plan have started. The architecture audit fixed only the confirmed dashboard render crash and stream-route precedence issue, added a route-order regression test, and recorded the existing baseline. Await approval before implementing the planned platform changes.
+- Keep root Python, collector, JavaScript, and end-to-end checks green.
+- Test authorization, privacy, and idempotency at each new producer/API
+  boundary.
+- Use additive schema changes and explicit historical mapping; do not guess
+  task/user ownership for old events.
+- Do not add productivity scoring, attendance tracking, prompt/source capture,
+  or hidden collection.
+- No production deployment until development login is disabled, every event
+  route is authenticated, project scoping is enforced, and deployment limits
+  are documented.
