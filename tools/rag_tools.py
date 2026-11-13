@@ -1,11 +1,9 @@
 import os
-import tempfile
-import subprocess
-from typing import List, Dict, Any
+from typing import List
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 
 
@@ -18,23 +16,6 @@ def get_embeddings():
     if _EMBEDDINGS is None:
         _EMBEDDINGS = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     return _EMBEDDINGS
-
-
-def clone_repo_at_ref(repo_full_name: str, ref: str) -> str:
-    """
-    Shallow-clones the repo at a specific branch/commit into a temp dir.
-    Returns the local path. Caller is responsible for cleanup if desired.
-    """
-    tmp_dir = tempfile.mkdtemp(prefix="repo_rag_")
-    token = os.environ.get("GITHUB_TOKEN", "")
-    clone_url = f"https://{token}@github.com/{repo_full_name}.git"
-
-    subprocess.run(
-        ["git", "clone", "--depth", "1", "--branch", ref, clone_url, tmp_dir],
-        check=True,
-        capture_output=True,
-    )
-    return tmp_dir
 
 
 def _should_index(filepath: str) -> bool:

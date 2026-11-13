@@ -1,446 +1,1205 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TRAC</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-<style>
-    :root {
-        --bg: #08090b;
-        --panel: #111316;
-        --panel-hover: #15181c;
-        --border: #1c1f24;
-        --border-soft: #16181c;
-        --text: #e8e9eb;
-        --text-dim: #9a9ea5;
-        --text-faint: #5c6067;
-        --amber: #ffb020;
-        --amber-dim: #7a5a18;
-        --green: #3dd68c;
-        --red: #ff5d5d;
-        --blue: #5b9dff;
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" id="themeColorMeta" content="#F6F7F9">
+<title>TRAC | Engineering Intelligence</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="icon" type="image/png" sizes="48x48" href="/static/favicon-48x48.png">
+<link rel="icon" type="image/png" sizes="180x180" href="/static/favicon-180x180.png">
+<link rel="icon" type="image/png" sizes="512x512" href="/static/favicon-512x512.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+<script>
+(() => {
+    try {
+        const stored = localStorage.getItem("trac-theme");
+        const preference = ["light", "dark", "system"].includes(stored) ? stored : "light";
+        const dark = preference === "dark" || (preference === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        document.documentElement.dataset.themePreference = preference;
+    } catch {
+        document.documentElement.dataset.theme = "light";
+        document.documentElement.dataset.themePreference = "light";
     }
-
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-        background: var(--bg);
-        color: var(--text);
-        font-family: 'Inter', -apple-system, sans-serif;
-        display: flex;
-        min-height: 100vh;
-        font-size: 14px;
-    }
-
-    ::selection { background: var(--amber-dim); color: var(--text); }
-
-    .sidebar {
-        width: 210px;
-        flex-shrink: 0;
-        border-right: 1px solid var(--border);
-        padding: 24px 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 28px;
-    }
-
-    .brand { display: flex; align-items: center; gap: 9px; }
-    .brand-mark {
-        width: 22px; height: 22px;
-        border: 1.5px solid var(--amber);
-        border-radius: 4px;
-        display: flex; align-items: center; justify-content: center;
-        color: var(--amber);
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 11px;
-        font-weight: 700;
-    }
-    .brand-name {
-        font-family: 'IBM Plex Mono', monospace;
-        font-weight: 700;
-        font-size: 15px;
-        letter-spacing: 0.14em;
-    }
-
-    .nav { display: flex; flex-direction: column; gap: 2px; }
-    .nav-item {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 12px;
-        color: var(--text-faint);
-        padding: 8px 10px;
-        border-radius: 6px;
-        letter-spacing: 0.03em;
-        display: flex;
-        align-items: center;
-        gap: 9px;
-        cursor: default;
-    }
-    .nav-item.active { color: var(--text); background: var(--panel); }
-    .nav-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: 0.5; }
-    .nav-item.active .nav-dot { background: var(--amber); opacity: 1; }
-
-    .sidebar-foot {
-        margin-top: auto;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 10.5px;
-        color: var(--text-faint);
-        line-height: 1.6;
-    }
-    .live-indicator { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
-    .live-dot {
-        width: 6px; height: 6px; border-radius: 50%;
-        background: var(--green);
-        box-shadow: 0 0 0 0 rgba(61,214,140,0.5);
-        animation: pulse-dot 2s infinite;
-    }
-    @keyframes pulse-dot {
-        0% { box-shadow: 0 0 0 0 rgba(61,214,140,0.45); }
-        70% { box-shadow: 0 0 0 6px rgba(61,214,140,0); }
-        100% { box-shadow: 0 0 0 0 rgba(61,214,140,0); }
-    }
-
-    .main { flex: 1; padding: 32px 40px 40px; max-width: 1080px; }
-    .page-header { margin-bottom: 28px; }
-    .page-title {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 13px;
-        color: var(--text-faint);
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        margin-bottom: 6px;
-    }
-    .page-sub { color: var(--text-dim); font-size: 14px; }
-
-    .pulse-panel {
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 18px 20px 14px;
-        margin-bottom: 20px;
-    }
-    .pulse-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
-    .pulse-label {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 10.5px;
-        color: var(--text-faint);
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-    }
-    .pulse-count { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--amber); }
-    .pulse-bars { display: flex; align-items: flex-end; gap: 3px; height: 44px; }
-    .pulse-bar {
-        flex: 1;
-        background: linear-gradient(180deg, var(--amber) 0%, var(--amber-dim) 100%);
-        border-radius: 2px 2px 0 0;
-        min-height: 3px;
-        opacity: 0.85;
-        transform-origin: bottom;
-        animation: rise 0.5s ease-out backwards;
-    }
-    .pulse-bar.zero { background: var(--border-soft); opacity: 1; }
-    @keyframes rise { from { transform: scaleY(0); } to { transform: scaleY(1); } }
-
-    .stats-row { display: flex; gap: 12px; margin-bottom: 24px; }
-    .stat-chip {
-        flex: 1;
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 14px 18px;
-    }
-    .stat-value { font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 600; }
-    .stat-label { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
-
-    .filters { display: flex; gap: 8px; margin-bottom: 22px; flex-wrap: wrap; }
-    .filter-btn {
-        font-family: 'IBM Plex Mono', monospace;
-        background: transparent;
-        border: 1px solid var(--border);
-        color: var(--text-dim);
-        padding: 6px 13px;
-        border-radius: 20px;
-        cursor: pointer;
-        font-size: 11.5px;
-        letter-spacing: 0.02em;
-        transition: all 0.15s ease;
-    }
-    .filter-btn:hover { border-color: var(--text-faint); color: var(--text); }
-    .filter-btn.active { background: var(--amber); border-color: var(--amber); color: #1a1300; font-weight: 600; }
-
-    .day-group { margin-bottom: 22px; }
-    .day-header {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 10.5px;
-        color: var(--text-faint);
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        margin-bottom: 8px;
-        padding-left: 2px;
-    }
-    .event-card {
-        background: var(--panel);
-        border: 1px solid var(--border-soft);
-        border-radius: 8px;
-        padding: 13px 16px;
-        margin-bottom: 6px;
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        transition: background 0.12s ease, border-color 0.12s ease;
-    }
-    .event-card:hover { background: var(--panel-hover); border-color: var(--border); }
-    .event-glyph {
-        width: 26px; height: 26px;
-        border-radius: 6px;
-        display: flex; align-items: center; justify-content: center;
-        font-size: 13px;
-        flex-shrink: 0;
-        font-family: 'IBM Plex Mono', monospace;
-    }
-    .glyph-agent { background: rgba(255,176,32,0.12); color: var(--amber); }
-    .glyph-github { background: rgba(91,157,255,0.12); color: var(--blue); }
-    .glyph-system { background: rgba(154,158,165,0.12); color: var(--text-dim); }
-    .glyph-critical { background: rgba(255,93,93,0.12); color: var(--red); }
-    .glyph-done { background: rgba(61,214,140,0.12); color: var(--green); }
-    .event-main { flex: 1; min-width: 0; }
-    .event-summary { font-size: 13.5px; color: var(--text); margin-bottom: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .tag {
-        font-family: 'IBM Plex Mono', monospace;
-        display: inline-block;
-        font-size: 10px;
-        color: var(--text-faint);
-        background: var(--border-soft);
-        padding: 2px 7px;
-        border-radius: 4px;
-        margin-right: 5px;
-        letter-spacing: 0.02em;
-    }
-    .event-meta { text-align: right; flex-shrink: 0; padding-left: 12px; }
-    .event-actor { font-size: 12px; color: var(--text-dim); margin-bottom: 2px; }
-    .event-time { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text-faint); }
-    .empty-state { text-align: center; padding: 90px 20px; color: var(--text-faint); }
-    .empty-glyph { font-family: 'IBM Plex Mono', monospace; font-size: 26px; color: var(--border); margin-bottom: 14px; }
-    .empty-title { color: var(--text-dim); font-size: 15px; margin-bottom: 6px; }
-    .empty-sub { font-size: 12.5px; max-width: 320px; margin: 0 auto; line-height: 1.6; }
-
-    @media (max-width: 720px) {
-        .sidebar { display: none; }
-        .main { padding: 20px; }
-        .stats-row { flex-wrap: wrap; }
-    }
-</style>
+})();
+</script>
+<link rel="stylesheet" href="/static/dashboard.css?direct">
 </head>
 <body>
-
-    <aside class="sidebar">
+<div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="Main navigation">
         <div class="brand">
-            <div class="brand-mark">T</div>
-            <div class="brand-name">TRAC</div>
+            <div class="brand-mark">
+                <img class="theme-logo" id="brandSymbol" src="/static/trac-symbol-light.svg" alt="">
+            </div>
+            <div class="brand-copy"><div class="brand-name">TRAC</div><div class="brand-sub">Engineering Intelligence</div></div>
         </div>
-        <nav class="nav">
-            <div class="nav-item active"><span class="nav-dot"></span>Timeline</div>
-            <div class="nav-item"><span class="nav-dot"></span>Agents</div>
-            <div class="nav-item"><span class="nav-dot"></span>Repos</div>
-            <div class="nav-item"><span class="nav-dot"></span>People</div>
+        <div class="nav-label">Workspace</div>
+        <nav class="nav" id="navigation">
+            <button class="nav-item active" data-page="overview"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/></svg><span class="nav-text">Overview</span></button>
+            <button class="nav-item" data-page="timeline"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="2.5" cy="6" r=".5" fill="currentColor"/><circle cx="2.5" cy="12" r=".5" fill="currentColor"/><circle cx="2.5" cy="18" r=".5" fill="currentColor"/></svg><span class="nav-text">Timeline</span><span class="nav-count" id="navTimelineCount">—</span></button>
+            <button class="nav-item" data-page="agents"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="16" height="13" rx="3"/><path d="M9 7V5a3 3 0 0 1 6 0v2M8 13h.01M16 13h.01M9 17h6"/></svg><span class="nav-text">Agents</span><span class="nav-count" id="navAgentCount">—</span></button>
+            <button class="nav-item" data-page="repositories"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5M8 13h8M8 17h8"/></svg><span class="nav-text">Repositories</span><span class="nav-count" id="navRepoCount">—</span></button>
+            <button class="nav-item" data-page="people"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3 20v-1a6 6 0 0 1 12 0v1M16 5.5a3 3 0 0 1 0 5.8M18 14a5 5 0 0 1 3 4.6V20"/></svg><span class="nav-text">People</span><span class="nav-count" id="navPeopleCount">—</span></button>
         </nav>
-        <div class="sidebar-foot">
-            <div class="live-indicator"><span class="live-dot"></span>LIVE — polling 5s</div>
-            every signal, from every<br>source, in order.
+        <div class="sidebar-bottom">
+            <div class="system-state"><span class="status-dot" id="systemDot"></span><span id="systemLabel">Connecting</span></div>
+            <div class="sidebar-caption" id="lastUpdated">Waiting for event data</div>
         </div>
     </aside>
 
     <main class="main">
-        <div class="page-header">
-            <div class="page-title">Engineering Intelligence</div>
-            <div class="page-sub">A single stream of everything your codebase and agents are doing.</div>
-        </div>
-
-        <div class="pulse-panel">
-            <div class="pulse-head">
-                <span class="pulse-label">Signal · last 24h</span>
-                <span class="pulse-count" id="pulseCount">0 events</span>
+        <header class="topbar">
+            <button class="icon-button mobile-menu" id="mobileMenu" type="button" aria-label="Open navigation">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </button>
+            <div class="heading-group">
+                <div class="eyebrow"><img class="theme-logo header-logo" id="headerSymbol" src="/static/trac-symbol-light.svg" alt=""> Engineering activity</div>
+                <h1 id="pageTitle">Engineering Intelligence</h1>
+                <div class="subtitle" id="pageSubtitle">A live view of reviews, agent activity, and repository health.</div>
             </div>
-            <div class="pulse-bars" id="pulseBars"></div>
-        </div>
-
-        <div class="stats-row" id="statsRow">
-            <div class="stat-chip">
-                <div class="stat-value" id="statTotal">0</div>
-                <div class="stat-label">Total events</div>
+            <div class="top-actions">
+                <span class="date-label" id="currentDate"></span>
+                <label class="sr-only" for="themeSelect">Color theme</label>
+                <select class="select theme-select" id="themeSelect" aria-label="Color theme">
+                    <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
+                </select>
+                <select class="select range-select" id="globalRange" aria-label="Dashboard time range">
+                    <option value="24h">24 Hours</option><option value="7d">7 Days</option><option value="30d">30 Days</option><option value="all" selected>All Time</option>
+                </select>
+                <button class="icon-button" id="refreshButton" type="button" aria-label="Refresh dashboard" title="Refresh dashboard">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.6-2L20 12M4 12l2.8 5a7 7 0 0 0 11.6-2"/></svg>
+                </button>
             </div>
-            <div class="stat-chip">
-                <div class="stat-value" id="statToday">0</div>
-                <div class="stat-label">Today</div>
-            </div>
-            <div class="stat-chip">
-                <div class="stat-value" id="statSources">0</div>
-                <div class="stat-label">Active sources</div>
-            </div>
-        </div>
+        </header>
 
-        <div class="filters" id="filters">
-            <button class="filter-btn active" data-source="">All</button>
-        </div>
+        <section class="view active" id="view-overview" data-view="overview">
+            <div class="kpi-grid" id="kpiGrid">
+                <div class="skeleton"></div><div class="skeleton"></div>
+                <div class="skeleton"></div><div class="skeleton"></div>
+            </div>
+            <div class="analytics-grid">
+                <section class="panel">
+                    <div class="panel-head"><div><h2 class="panel-title">Activity over time</h2><div class="panel-subtitle">Commits, pull requests, and issues</div></div><div class="range-tabs" id="activityRanges"><button class="range-tab" data-range="24h">24H</button><button class="range-tab active" data-range="7d">7D</button><button class="range-tab" data-range="30d">30D</button></div></div>
+                    <div class="panel-body"><div class="chart-box" id="activityChart"></div><div class="activity-legend"><span><i class="legend-commit"></i>Commits</span><span><i class="legend-pr"></i>PRs</span><span><i class="legend-issue"></i>Issues</span></div></div>
+                </section>
+                <section class="panel">
+                    <div class="panel-head"><div><h2 class="panel-title">Issue severity</h2><div class="panel-subtitle">Findings captured in review metadata</div></div></div>
+                    <div class="panel-body"><div class="severity-layout" id="severityChart"></div></div>
+                </section>
+            </div>
+            <div class="lower-grid">
+                <section class="panel">
+                    <div class="panel-head"><div><h2 class="panel-title">Developer Activity &amp; Code Health</h2><div class="panel-subtitle">Contributor activity in the selected period</div></div></div>
+                    <div class="contributor-table-wrap">
+                        <table class="contributor-table">
+                            <thead><tr><th>Contributor</th><th>Commits &amp; PRs</th><th>Issues Flagged</th><th>Code Health</th></tr></thead>
+                            <tbody id="contributorsTable"><tr><td colspan="4"><div class="skeleton"></div></td></tr></tbody>
+                        </table>
+                    </div>
+                </section>
+                <section class="panel">
+                    <div class="panel-head">
+                        <div><h2 class="panel-title">Recent AI Code Reviews</h2><div class="panel-subtitle">Latest review activity from your repositories</div></div>
+                        <button class="panel-link" data-navigate="timeline" type="button">View full timeline →</button>
+                    </div>
+                    <div class="review-feed" id="overviewEvents"><div class="skeleton"></div><div class="skeleton"></div></div>
+                </section>
+            </div>
+            <div class="compatibility-hooks" aria-hidden="true">
+                <div id="executionChart"></div>
+                <div id="agentChart"></div>
+            </div>
+        </section>
 
-        <div id="timeline"></div>
+        <section class="view" id="view-timeline" data-view="timeline">
+            <div class="page-intro"><div><h2>Activity timeline</h2><p>Search and filter every event received by TRAC.</p></div><div class="section-hint" id="timelineRangeLabel"></div></div>
+            <div id="timelineMount"></div>
+        </section>
+
+        <section class="view" id="view-agents" data-view="agents">
+            <div class="page-intro"><div><h2>Agents</h2><p>Execution activity and outcomes reported by agents.</p></div><div class="section-hint" id="agentPageCount"></div></div>
+            <div class="entity-grid" id="agentsGrid"></div>
+        </section>
+        <section class="view" id="view-repositories" data-view="repositories">
+            <div class="page-intro"><div><h2>Repositories</h2><p>Repository activity observed in review events.</p></div><div class="section-hint" id="repoPageCount"></div></div>
+            <div class="entity-grid" id="repositoriesGrid"></div>
+        </section>
+        <section class="view" id="view-people" data-view="people">
+            <div class="page-intro"><div><h2>People</h2><p>Contributors and actors explicitly recorded in events.</p></div><div class="section-hint" id="peoplePageCount"></div></div>
+            <div class="entity-grid" id="peopleGrid"></div>
+        </section>
     </main>
+</div>
+
+<div class="drawer-backdrop" id="drawerBackdrop"></div>
+<aside class="detail-drawer" id="detailDrawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+    <div class="drawer-head"><div><div class="eyebrow"><span class="eyebrow-rule"></span> Event details</div><h2 id="drawerTitle">Activity</h2></div><button class="icon-button" id="closeDrawer" type="button" aria-label="Close details"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+    <div class="drawer-content" id="drawerContent"></div>
+</aside>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
-    const timeline = document.getElementById("timeline");
-    const filtersEl = document.getElementById("filters");
-    const pulseBars = document.getElementById("pulseBars");
-    const pulseCount = document.getElementById("pulseCount");
-    let currentSource = "";
+(() => {
+    "use strict";
 
-    async function fetchEvents(source = "") {
-        const url = source ? `/api/events?source=${encodeURIComponent(source)}&limit=200` : "/api/events?limit=200";
-        const res = await fetch(url);
-        return res.json();
+    const API_URL = "/api/events?limit=200";
+    const POLL_INTERVAL = 5000;
+    const SEVERITIES = ["critical", "high", "medium", "low"];
+    const SEVERITY_COLORS = { critical: "--critical", high: "--high", medium: "--medium", low: "--low" };
+    const TITLES = {
+        overview: ["Engineering Intelligence", "A live view of reviews, agent activity, and repository health."],
+        timeline: ["Timeline", "Search, filter, and inspect reported engineering activity."],
+        agents: ["Agents", "Execution activity and outcomes reported by agents."],
+        repositories: ["Repositories", "Repository activity observed in review events."],
+        people: ["People", "Contributors and actors explicitly recorded in events."]
+    };
+    const state = {
+        events: [], range: "all", activityRange: "7d", page: "overview",
+        search: "", agent: "", repo: "", type: "", status: "", sort: "newest",
+        loading: true, error: false, lastSuccess: null, signature: null, toastTimer: null
+    };
+    const THEME_STORAGE_KEY = "trac-theme";
+    const systemThemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    let themePreference = "light";
+    const $ = (selector, root = document) => root.querySelector(selector);
+    const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+    const cssColor = token => getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+    const iconPaths = {
+        activity: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+        check: '<path d="m5 12 4 4L19 6"/>',
+        fail: '<path d="m18 6-12 12M6 6l12 12"/>',
+        issue: '<path d="M12 9v4m0 4h.01"/><path d="M10.3 3.9 2.6 17.3A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-2.7L13.7 3.9a2 2 0 0 0-3.4 0Z"/>',
+        agent: '<rect x="4" y="7" width="16" height="13" rx="3"/><path d="M9 7V5a3 3 0 0 1 6 0v2M8 13h.01M16 13h.01M9 17h6"/>',
+        repo: '<path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5M8 13h8M8 17h8"/>',
+        clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+        person: '<circle cx="9" cy="8" r="3"/><path d="M3 20v-1a6 6 0 0 1 12 0v1M16 5.5a3 3 0 0 1 0 5.8M18 14a5 5 0 0 1 3 4.6V20"/>',
+        search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
+        github: '<path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 6v-3.9a3.4 3.4 0 0 0-1-2.7c3.3-.4 6.8-1.6 6.8-7A5.4 5.4 0 0 0 19.4 4 5 5 0 0 0 19.3.5S18 .1 15 2.2a13.5 13.5 0 0 0-7 0C5 0 3.7.5 3.7.5A5 5 0 0 0 3.6 4a5.4 5.4 0 0 0-1.4 3.8c0 5.4 3.5 6.6 6.8 7a3.4 3.4 0 0 0-1 2.7V22"/>',
+        arrow: '<path d="M7 17 17 7M7 7h10v10"/>',
+        close: '<path d="m6 6 12 12M18 6 6 18"/>'
+    };
+
+    function icon(name, className = "") {
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("fill", "none");
+        svg.setAttribute("stroke", "currentColor");
+        svg.setAttribute("stroke-width", "1.8");
+        svg.setAttribute("stroke-linecap", "round");
+        svg.setAttribute("stroke-linejoin", "round");
+        if (className) svg.setAttribute("class", className);
+        svg.innerHTML = iconPaths[name] || iconPaths.activity;
+        return svg;
+    }
+
+    function element(tag, className, text) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined && text !== null) node.textContent = text;
+        return node;
+    }
+
+    function bindChartTooltip(container, target, text) {
+        let tooltip = $(".chart-tooltip", container);
+        if (!tooltip) {
+            tooltip = element("div", "chart-tooltip");
+            tooltip.setAttribute("role", "tooltip");
+            tooltip.setAttribute("aria-hidden", "true");
+            container.append(tooltip);
+        }
+        const show = () => {
+            tooltip.textContent = text;
+            tooltip.classList.add("visible");
+            tooltip.setAttribute("aria-hidden", "false");
+        };
+        const hide = () => {
+            tooltip.classList.remove("visible");
+            tooltip.setAttribute("aria-hidden", "true");
+        };
+        target.addEventListener("pointerenter", show);
+        target.addEventListener("pointerleave", hide);
+        target.addEventListener("focus", show);
+        target.addEventListener("blur", hide);
+        target.addEventListener("pointermove", event => {
+            const bounds = container.getBoundingClientRect();
+            const left = Math.max(8, Math.min(event.clientX - bounds.left + 12, bounds.width - tooltip.offsetWidth - 8));
+            const top = Math.max(8, event.clientY - bounds.top - tooltip.offsetHeight - 10);
+            tooltip.style.left = `${left}px`;
+            tooltip.style.top = `${top}px`;
+        });
+    }
+
+    function formatDate(iso, options = {}) {
+        const date = new Date(iso);
+        return Number.isNaN(date.getTime()) ? "Timestamp unavailable" :
+            new Intl.DateTimeFormat(undefined, options).format(date);
     }
 
     function timeAgo(iso) {
-        const diffMs = Date.now() - new Date(iso).getTime();
-        const mins = Math.floor(diffMs / 60000);
-        if (mins < 1) return "just now";
-        if (mins < 60) return `${mins}m ago`;
-        const hrs = Math.floor(mins / 60);
-        if (hrs < 24) return `${hrs}h ago`;
-        const days = Math.floor(hrs / 24);
-        return `${days}d ago`;
+        const date = new Date(iso);
+        if (Number.isNaN(date.getTime())) return "time unavailable";
+        const minutes = Math.floor((Date.now() - date.getTime()) / 60000);
+        if (minutes < 1) return "just now";
+        if (minutes < 60) return `${minutes}m ago`;
+        if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`;
+        return `${Math.floor(minutes / 1440)}d ago`;
     }
 
-    function dayLabel(iso) {
-        const d = new Date(iso);
-        const today = new Date();
-        const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
-        const sameDay = (a, b) => a.toDateString() === b.toDateString();
-        if (sameDay(d, today)) return "Today";
-        if (sameDay(d, yesterday)) return "Yesterday";
-        return d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
-    }
-
-    function glyphFor(ev) {
-        const sev = (ev.summary || "").toLowerCase();
-        if (sev.includes("critical")) return { cls: "glyph-critical", ch: "!" };
-        if (ev.type?.startsWith("agent.")) return { cls: "glyph-agent", ch: "◆" };
-        if (ev.source === "github" || ev.type?.startsWith("pr.") || ev.type?.startsWith("commit")) return { cls: "glyph-github", ch: "⎇" };
-        if (ev.type?.includes("completed") || ev.type?.includes("merged")) return { cls: "glyph-done", ch: "✓" };
-        return { cls: "glyph-system", ch: "•" };
-    }
-
-    function renderStats(events) {
-        const today = new Date().toDateString();
-        const todayCount = events.filter(e => new Date(e.timestamp).toDateString() === today).length;
-        const sources = new Set(events.map(e => e.source));
-        document.getElementById("statTotal").textContent = events.length;
-        document.getElementById("statToday").textContent = todayCount;
-        document.getElementById("statSources").textContent = sources.size;
-    }
-
-    function renderPulse(events) {
-        const buckets = new Array(24).fill(0);
-        const now = Date.now();
-        events.forEach(e => {
-            const ageHrs = (now - new Date(e.timestamp).getTime()) / 3600000;
-            if (ageHrs >= 0 && ageHrs < 24) {
-                buckets[23 - Math.floor(ageHrs)]++;
+    function issueCounts(event) {
+        const result = Object.fromEntries(SEVERITIES.map(severity => [severity, 0]));
+        const metadata = event.metadata || {};
+        const rawCounts = metadata.issue_counts;
+        if (rawCounts && typeof rawCounts === "object") {
+            for (const [key, value] of Object.entries(rawCounts)) {
+                const normalized = normalizeSeverity(key);
+                if (normalized && Number.isFinite(Number(value))) result[normalized] += Number(value);
             }
-        });
-        const max = Math.max(...buckets, 1);
-        pulseBars.innerHTML = "";
-        buckets.forEach((count, i) => {
-            const bar = document.createElement("div");
-            bar.className = "pulse-bar" + (count === 0 ? " zero" : "");
-            const heightPct = count === 0 ? 6 : Math.max(10, (count / max) * 100);
-            bar.style.height = heightPct + "%";
-            bar.style.animationDelay = (i * 0.015) + "s";
-            bar.title = `${count} event(s)`;
-            pulseBars.appendChild(bar);
-        });
-        pulseCount.textContent = `${events.length} events`;
+            return result;
+        }
+        if (Array.isArray(metadata.findings)) {
+            for (const finding of metadata.findings) {
+                const normalized = normalizeSeverity(finding?.severity);
+                if (normalized) result[normalized] += 1;
+            }
+            return result;
+        }
+        const summary = String(event.summary || "");
+        const aliases = { critical: "critical", high: "high|major", medium: "medium|minor", low: "low|nit" };
+        for (const severity of SEVERITIES) {
+            const match = summary.match(new RegExp(`(?:found\\s+)?(\\d+)\\s+(?:${aliases[severity]})\\b`, "i"));
+            if (match) result[severity] = Number(match[1]);
+        }
+        return result;
     }
 
-    function renderEvents(events) {
-        timeline.innerHTML = "";
-        if (events.length === 0) {
-            timeline.innerHTML = `
-                <div class="empty-state">
-                    <div class="empty-glyph">◇</div>
-                    <div class="empty-title">No signal yet</div>
-                    <div class="empty-sub">Once your agents or repos start reporting, every event will land here in order.</div>
-                </div>`;
+    function normalizeSeverity(value) {
+        const severity = String(value || "").toLowerCase();
+        if (severity === "critical") return "critical";
+        if (severity === "high" || severity === "major") return "high";
+        if (severity === "medium" || severity === "minor") return "medium";
+        if (severity === "low" || severity === "nit") return "low";
+        return null;
+    }
+
+    function eventStatus(event) {
+        const status = String(event.status || event.metadata?.publication_status || "").toLowerCase();
+        if (["fully_completed", "completed", "published"].includes(status)) return "success";
+        if (["failed", "publication_failed", "analysis_failed"].includes(status)) return "failed";
+        if (["pending", "publication_pending", "queued", "in_progress"].includes(status)) return "pending";
+        if (status === "analysis_completed") return "partial";
+        if (event.type === "agent.review_completed") return "success";
+        if (event.type === "agent.review_failed") return "failed";
+        if (event.type?.includes("pending")) return "pending";
+        if (event.type?.startsWith("agent.")) return "partial";
+        return "info";
+    }
+
+    function statusLabel(status) {
+        return ({ success: "Completed", failed: "Failed", pending: "Pending", partial: "Analysis complete", info: "Recorded" })[status] || "Recorded";
+    }
+
+    function selectedEvents(range = state.range) {
+        if (range === "all") return [...state.events];
+        const durations = { "24h": 86400000, "7d": 7 * 86400000, "30d": 30 * 86400000 };
+        const cutoff = Date.now() - durations[range];
+        return state.events.filter(event => {
+            const timestamp = new Date(event.timestamp).getTime();
+            return Number.isFinite(timestamp) && timestamp >= cutoff;
+        });
+    }
+
+    function previousPeriodEvents(range) {
+        const duration = { "24h": 86400000, "7d": 7 * 86400000, "30d": 30 * 86400000 }[range];
+        if (!duration) return null;
+        const end = Date.now() - duration;
+        const start = end - duration;
+        return state.events.filter(event => {
+            const timestamp = new Date(event.timestamp).getTime();
+            return Number.isFinite(timestamp) && timestamp >= start && timestamp < end;
+        });
+    }
+
+    function uniqueValues(events, selector) {
+        return [...new Set(events.map(selector).filter(value => typeof value === "string" && value.trim()))].sort((a, b) => a.localeCompare(b));
+    }
+
+    function sourceIsAgent(event) {
+        return Boolean(event.source) && (event.source.includes("agent") || event.type?.startsWith("agent."));
+    }
+
+    function isReviewEvent(event) {
+        return String(event.type || "").toLowerCase().includes("review") ||
+            /^pr\s*#\d+/i.test(String(event.ref || ""));
+    }
+
+    function isPullRequestEvent(event) {
+        const type = String(event.type || "").toLowerCase();
+        return isReviewEvent(event) || type.includes("pull_request") || type.includes("pullrequest") ||
+            /(?:^|[._])pr(?:[._]|$)/.test(type);
+    }
+
+    function isCommitEvent(event) {
+        return String(event.type || "").toLowerCase().includes("commit") && !isPullRequestEvent(event);
+    }
+
+    function countCriticalHighIssues(events) {
+        return events.reduce((total, event) => {
+            const counts = issueCounts(event);
+            return total + counts.critical + counts.high;
+        }, 0);
+    }
+
+    function countPullRequests(events) {
+        return events.filter(isPullRequestEvent).length;
+    }
+
+    function countCommits(events) {
+        return events.filter(isCommitEvent).length;
+    }
+
+    function codeQualityPassRate(events) {
+        const reviews = events.filter(isReviewEvent);
+        return reviews.length ? reviews.filter(event => eventStatus(event) === "success").length / reviews.length * 100 : 0;
+    }
+
+    function countIssues(events) {
+        return events.reduce((sum, event) => {
+            const counts = issueCounts(event);
+            return sum + SEVERITIES.reduce((total, severity) => total + counts[severity], 0);
+        }, 0);
+    }
+
+    function showToast(message) {
+        const toast = $("#toast");
+        toast.textContent = message;
+        toast.classList.add("show");
+        clearTimeout(state.toastTimer);
+        state.toastTimer = setTimeout(() => toast.classList.remove("show"), 4200);
+    }
+
+    function readThemePreference() {
+        try {
+            const preference = localStorage.getItem(THEME_STORAGE_KEY);
+            return ["light", "dark", "system"].includes(preference) ? preference : "light";
+        } catch {
+            return "light";
+        }
+    }
+
+    function applyTheme(preference, savePreference = false) {
+        themePreference = ["light", "dark", "system"].includes(preference) ? preference : "system";
+        const dark = themePreference === "dark" || (themePreference === "system" && systemThemeQuery.matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        document.documentElement.dataset.themePreference = themePreference;
+        $("#themeSelect").value = themePreference;
+        const symbolPath = dark ? "/static/trac-symbol.svg" : "/static/trac-symbol-light.svg";
+        $$(".theme-logo").forEach(image => { image.src = symbolPath; });
+        const themeColor = document.querySelector('meta[name="theme-color"]');
+        if (themeColor) themeColor.content = cssColor("--bg");
+        if (savePreference) {
+            try {
+                localStorage.setItem(THEME_STORAGE_KEY, themePreference);
+            } catch {
+                showToast("Theme changed, but this browser could not save the preference");
+            }
+        }
+    }
+
+    function setSystemStatus(connected) {
+        $("#systemLabel").textContent = connected ? "API connected" : "Connection issue";
+        $("#systemDot").style.background = connected ? "var(--success)" : "var(--critical)";
+    }
+
+    function updateHeader() {
+        $("#currentDate").textContent = formatDate(Date.now(), { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+        $("#lastUpdated").textContent = state.lastSuccess ? `Updated ${formatDate(state.lastSuccess, { hour: "numeric", minute: "2-digit" })}` : "Waiting for event data";
+        $("#timelineRangeLabel").textContent = state.range === "all" ? "All recorded activity" : `Last ${$("#globalRange").selectedOptions[0].text}`;
+    }
+
+    function trendText(currentValue, oldValue) {
+        if (!oldValue && currentValue === 0) return { text: "No change", kind: "flat" };
+        if (!oldValue) return { text: "New activity", kind: "up" };
+        const change = Math.round(((currentValue - oldValue) / oldValue) * 100);
+        return { text: `${change > 0 ? "+" : ""}${change}% vs last period`, kind: change > 0 ? "up" : change < 0 ? "down" : "flat" };
+    }
+
+    function renderKpis(events) {
+        const previous = previousPeriodEvents(state.range);
+        const contributors = uniqueValues(events, event => event.actor);
+        const analyzedCount = list => countPullRequests(list) + countCommits(list);
+        const currentMetrics = [
+            { label: "PRs & Commits Analyzed", value: `${countPullRequests(events)} PRs · ${countCommits(events)} commits`, description: "Analyzed in selected period", icon: "activity", kind: "", calc: analyzedCount },
+            { label: "Code Quality Pass Rate", value: `${Math.round(codeQualityPassRate(events))}%`, description: "Completed reviews without failure", icon: "check", kind: "success", calc: codeQualityPassRate },
+            { label: "Open Critical / High Issues", value: countCriticalHighIssues(events).toLocaleString(), description: "Critical and high findings", icon: "issue", kind: "issues", calc: countCriticalHighIssues },
+            { label: "Active Contributors", value: contributors.length.toLocaleString(), description: "Distinct contributors in period", icon: "person", kind: "agents", calc: list => uniqueValues(list, event => event.actor).length }
+        ];
+        const grid = $("#kpiGrid");
+        grid.replaceChildren();
+        for (const metric of currentMetrics) {
+            const card = element("article", `kpi-card ${metric.kind}`);
+            const top = element("div", "kpi-top");
+            top.append(element("span", "kpi-label", metric.label));
+            const badge = element("span", "kpi-icon");
+            badge.append(icon(metric.icon));
+            top.append(badge);
+            card.append(top, element("div", "kpi-value", metric.value), element("div", "kpi-foot"));
+            const foot = $(".kpi-foot", card);
+            foot.append(element("span", "", metric.description));
+            const trend = previous?.length
+                ? trendText(metric.calc(events), metric.calc(previous))
+                : { text: "No prior period", kind: "flat" };
+            foot.append(element("span", `trend ${trend.kind}`, trend.text));
+            grid.append(card);
+        }
+    }
+
+    function renderActivityChart(events, range = state.activityRange) {
+        const box = $("#activityChart");
+        box.replaceChildren();
+        const config = range === "24h" ? { count: 24, mode: "hour" } : { count: range === "7d" ? 7 : 30, mode: "day" };
+        const buckets = Array.from({ length: config.count }, () => ({ commits: 0, prs: 0, issues: 0 }));
+        const now = new Date();
+        const start = new Date(now);
+        if (config.mode === "hour") {
+            start.setMinutes(0, 0, 0);
+            start.setHours(start.getHours() - config.count + 1);
+        } else {
+            start.setHours(0, 0, 0, 0);
+            start.setDate(start.getDate() - config.count + 1);
+        }
+        for (const event of events) {
+            const date = new Date(event.timestamp);
+            if (Number.isNaN(date.getTime()) || date < start || date > now) continue;
+            const offset = config.mode === "hour"
+                ? Math.floor((date.getTime() - start.getTime()) / 3600000)
+                : Math.floor((new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime() - new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime()) / 86400000);
+            if (offset >= 0 && offset < buckets.length) {
+                if (isCommitEvent(event)) buckets[offset].commits++;
+                if (isPullRequestEvent(event)) buckets[offset].prs++;
+                buckets[offset].issues += countIssues([event]);
+            }
+        }
+        const width = 720, height = 180, pad = { left: 28, right: 12, top: 12, bottom: 24 };
+        const chartWidth = width - pad.left - pad.right, chartHeight = height - pad.top - pad.bottom;
+        const totals = buckets.map(bucket => bucket.commits + bucket.prs + bucket.issues);
+        const max = Math.max(...totals, 1);
+        const series = [
+            { key: "commits", color: cssColor("--accent"), label: "Commits" },
+            { key: "prs", color: cssColor("--medium"), label: "PRs" },
+            { key: "issues", color: cssColor("--high"), label: "Issues" }
+        ];
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+        svg.setAttribute("role", "img");
+        svg.setAttribute("aria-label", "Stacked activity bars for commits, pull requests, and issues");
+        for (let i = 0; i <= 3; i++) {
+            const y = pad.top + chartHeight * i / 3;
+            const line = document.createElementNS(svg.namespaceURI, "line");
+            line.setAttribute("x1", pad.left); line.setAttribute("x2", width - pad.right);
+            line.setAttribute("y1", y); line.setAttribute("y2", y);
+            line.setAttribute("stroke", cssColor("--border")); line.setAttribute("stroke-dasharray", "3 5");
+            svg.append(line);
+            const label = document.createElementNS(svg.namespaceURI, "text");
+            label.setAttribute("x", 1); label.setAttribute("y", y + 3);
+            label.classList.add("chart-axis-label");
+            label.textContent = String(Math.ceil(max * (3 - i) / 3));
+            svg.append(label);
+        }
+        const bars = document.createElementNS(svg.namespaceURI, "g");
+        bars.setAttribute("id", "activityFill");
+        svg.append(bars);
+        const slotWidth = chartWidth / buckets.length;
+        const barWidth = Math.min(20, slotWidth * .58);
+        for (let index = 0; index < buckets.length; index++) {
+            const bucket = buckets[index];
+            const date = config.mode === "hour" ? new Date(start.getTime() + index * 3600000) : new Date(start.getTime() + index * 86400000);
+            let stackHeight = 0;
+            const roundedTopIndex = series.map(item => bucket[item.key] > 0).lastIndexOf(true);
+            series.forEach((item, seriesIndex) => {
+                const value = bucket[item.key];
+                if (!value) return;
+                const segmentHeight = value / max * chartHeight;
+                const rect = document.createElementNS(svg.namespaceURI, "rect");
+                const x = pad.left + slotWidth * index + (slotWidth - barWidth) / 2;
+                const y = pad.top + chartHeight - stackHeight - segmentHeight;
+                rect.setAttribute("x", x); rect.setAttribute("y", y);
+                rect.setAttribute("width", barWidth); rect.setAttribute("height", Math.max(segmentHeight, 1));
+                rect.setAttribute("fill", item.color);
+                rect.setAttribute("rx", seriesIndex === roundedTopIndex ? "4" : "0");
+                const title = document.createElementNS(svg.namespaceURI, "title");
+                title.textContent = `${formatDate(date, config.mode === "hour" ? { hour: "numeric", month: "short", day: "numeric" } : { month: "short", day: "numeric" })} · ${item.label}: ${value}`;
+                rect.append(title); bars.append(rect);
+                bindChartTooltip(box, rect, title.textContent);
+                stackHeight += segmentHeight;
+            });
+        }
+        const labelIndexes = new Set([0, Math.floor((buckets.length - 1) / 3), Math.floor(2 * (buckets.length - 1) / 3), buckets.length - 1]);
+        for (const index of labelIndexes) {
+            const date = config.mode === "hour" ? new Date(start.getTime() + index * 3600000) : new Date(start.getTime() + index * 86400000);
+            const label = document.createElementNS(svg.namespaceURI, "text");
+            label.setAttribute("x", pad.left + slotWidth * index + slotWidth / 2); label.setAttribute("y", height - 4);
+            label.classList.add("chart-axis-label");
+            label.setAttribute("text-anchor", index === 0 ? "start" : index === buckets.length - 1 ? "end" : "middle");
+            label.textContent = formatDate(date, config.mode === "hour" ? { hour: "numeric" } : { month: "short", day: "numeric" });
+            svg.append(label);
+        }
+        if (!events.length) {
+            const note = element("div", "chart-empty", "No events in this period yet");
+            note.style.position = "absolute";
+            note.style.inset = "0";
+            box.append(note);
+        }
+        box.append(svg);
+    }
+
+    function renderSeverityChart(events) {
+        const mount = $("#severityChart");
+        mount.replaceChildren();
+        const counts = Object.fromEntries(SEVERITIES.map(severity => [severity, 0]));
+        for (const event of events) {
+            const values = issueCounts(event);
+            for (const severity of SEVERITIES) counts[severity] += values[severity];
+        }
+        const total = SEVERITIES.reduce((sum, severity) => sum + counts[severity], 0);
+        const wrap = element("div", "donut-wrap");
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 120 120");
+        const radius = 44, strokeWidth = 22;
+        const circumference = 2 * Math.PI * radius;
+        const base = document.createElementNS(svg.namespaceURI, "circle");
+        base.setAttribute("cx", "60"); base.setAttribute("cy", "60"); base.setAttribute("r", String(radius));
+        base.setAttribute("fill", "none"); base.setAttribute("stroke", cssColor("--border")); base.setAttribute("stroke-width", String(strokeWidth));
+        svg.append(base);
+        let offset = 0;
+        if (total) {
+            for (const severity of SEVERITIES) {
+                if (!counts[severity]) continue;
+                const circle = document.createElementNS(svg.namespaceURI, "circle");
+                const segmentLength = circumference * counts[severity] / total;
+                const length = Math.max(0, segmentLength - 2);
+                circle.setAttribute("cx", "60"); circle.setAttribute("cy", "60"); circle.setAttribute("r", String(radius));
+                circle.setAttribute("fill", "none"); circle.setAttribute("stroke", cssColor(SEVERITY_COLORS[severity]));
+                circle.setAttribute("stroke-width", String(strokeWidth)); circle.setAttribute("stroke-dasharray", `${length} ${circumference - length}`);
+                circle.setAttribute("stroke-dashoffset", String(-offset)); circle.setAttribute("stroke-linecap", "round");
+                const title = document.createElementNS(svg.namespaceURI, "title");
+                title.textContent = `${severity}: ${counts[severity]}`;
+                circle.append(title); svg.append(circle); offset += segmentLength;
+                bindChartTooltip(mount, circle, title.textContent);
+            }
+        }
+        wrap.append(svg);
+        const center = element("div", "donut-total");
+        center.append(element("strong", "", total.toLocaleString()), element("span", "", "ISSUES"));
+        wrap.append(center);
+        mount.append(wrap);
+        const legend = element("div", "legend");
+        for (const severity of SEVERITIES) {
+            const row = element("div", `legend-item${counts[severity] === 0 ? " zero" : ""}`);
+            const dot = element("span", "legend-dot"); dot.style.background = cssColor(SEVERITY_COLORS[severity]);
+            row.append(dot, element("span", "", severity[0].toUpperCase() + severity.slice(1)), element("strong", "legend-value", counts[severity].toLocaleString()));
+            legend.append(row);
+        }
+        mount.append(legend);
+    }
+
+    function renderExecutionChart(events) {
+        const mount = $("#executionChart");
+        mount.replaceChildren();
+        const counts = {
+            success: events.filter(event => isReviewEvent(event) && eventStatus(event) === "success").length,
+            failed: events.filter(event => eventStatus(event) === "failed").length,
+            pending: events.filter(event => eventStatus(event) === "pending").length,
+            partial: events.filter(event => eventStatus(event) === "partial").length
+        };
+        const max = Math.max(...Object.values(counts), 1);
+        const definitions = [
+            ["Completed", counts.success, cssColor("--success")],
+            ["Failed", counts.failed, cssColor("--critical")],
+            ["Pending", counts.pending, cssColor("--high")],
+            ["Analysis complete", counts.partial, cssColor("--medium")]
+        ];
+        for (const [label, count, color] of definitions) {
+            const row = element("div", "break-row");
+            row.append(element("span", "", label));
+            const track = element("div", "break-track");
+            const fill = element("div", "break-fill"); fill.style.width = `${count / max * 100}%`; fill.style.background = color;
+            track.append(fill); row.append(track, element("span", "break-count", String(count)));
+            mount.append(row);
+        }
+    }
+
+    function renderAgentChart(events) {
+        const mount = $("#agentChart");
+        mount.replaceChildren();
+        const totals = new Map();
+        for (const event of events.filter(sourceIsAgent)) {
+            totals.set(event.source, (totals.get(event.source) || 0) + 1);
+        }
+        const values = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+        if (!values.length) {
+            mount.append(element("div", "chart-empty", "Agent activity will appear when agents report events."));
             return;
         }
-
-        let lastDay = null;
-        let dayContainer = null;
-
-        for (const ev of events) {
-            const label = dayLabel(ev.timestamp);
-            if (label !== lastDay) {
-                lastDay = label;
-                const group = document.createElement("div");
-                group.className = "day-group";
-                group.innerHTML = `<div class="day-header">${label}</div>`;
-                dayContainer = document.createElement("div");
-                group.appendChild(dayContainer);
-                timeline.appendChild(group);
-            }
-
-            const g = glyphFor(ev);
-            const card = document.createElement("div");
-            card.className = "event-card";
-            card.innerHTML = `
-                <div class="event-glyph ${g.cls}">${g.ch}</div>
-                <div class="event-main">
-                    <div class="event-summary">${ev.summary}</div>
-                    <span class="tag">${ev.source}</span>
-                    <span class="tag">${ev.type}</span>
-                    ${ev.repo ? `<span class="tag">${ev.repo}</span>` : ""}
-                </div>
-                <div class="event-meta">
-                    ${ev.actor ? `<div class="event-actor">${ev.actor}</div>` : ""}
-                    <div class="event-time">${timeAgo(ev.timestamp)}</div>
-                </div>
-            `;
-            dayContainer.appendChild(card);
+        const max = Math.max(...values.map(([, count]) => count), 1);
+        for (const [name, count] of values) {
+            const row = element("div", "agent-row");
+            row.append(element("span", "agent-name", name));
+            const track = element("div", "agent-track");
+            const fill = element("div", "agent-fill"); fill.style.width = `${count / max * 100}%`;
+            track.append(fill); row.append(track, element("span", "agent-count", String(count)));
+            mount.append(row);
         }
     }
 
-    function renderFilters(sources) {
-        filtersEl.innerHTML = `<button class="filter-btn active" data-source="">All</button>`;
-        for (const src of sources) {
-            const btn = document.createElement("button");
-            btn.className = "filter-btn";
-            btn.dataset.source = src;
-            btn.textContent = src;
-            filtersEl.appendChild(btn);
+    function renderContributors(events) {
+        const mount = $("#contributorsTable");
+        mount.replaceChildren();
+        const contributors = new Map();
+        for (const event of events) {
+            if (!event.actor) continue;
+            const person = contributors.get(event.actor) || { name: event.actor, commits: 0, prs: 0, issues: 0, critical: 0, high: 0, activity: 0 };
+            if (isCommitEvent(event)) person.commits++;
+            if (isPullRequestEvent(event)) person.prs++;
+            const counts = issueCounts(event);
+            person.issues += SEVERITIES.reduce((sum, severity) => sum + counts[severity], 0);
+            person.critical += counts.critical;
+            person.high += counts.high;
+            person.activity++;
+            contributors.set(event.actor, person);
         }
-        filtersEl.querySelectorAll(".filter-btn").forEach(btn => {
-            btn.addEventListener("click", async () => {
-                filtersEl.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
-                btn.classList.add("active");
-                currentSource = btn.dataset.source;
-                const events = await fetchEvents(currentSource);
-                renderEvents(events);
+        const people = [...contributors.values()].sort((a, b) => b.activity - a.activity).slice(0, 7);
+        if (!people.length) {
+            const row = element("tr");
+            const cell = element("td", "section-hint", "No contributor activity recorded yet.");
+            cell.colSpan = 4;
+            row.append(cell);
+            mount.append(row);
+            return;
+        }
+        for (const person of people) {
+            const row = element("tr");
+            const contributor = element("td");
+            const identity = element("div", "contributor-person");
+            const initials = person.name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join("").toUpperCase();
+            identity.append(element("span", "contributor-avatar", initials), element("span", "", person.name));
+            contributor.append(identity);
+            const activity = element("td");
+            activity.append(element("span", "contributor-count", `${person.commits} commits · ${person.prs} PRs`));
+            const issues = element("td");
+            issues.append(element("span", "contributor-count", String(person.issues)));
+            const health = person.critical
+                ? ["At Risk", "risk"]
+                : person.issues || person.high ? ["Needs Review", "review"] : ["Healthy", "healthy"];
+            const statusCell = element("td");
+            statusCell.append(element("span", `health-pill ${health[1]}`, health[0]));
+            row.append(contributor, activity, issues, statusCell);
+            mount.append(row);
+        }
+    }
+
+    function renderRecentReviews(events) {
+        const mount = $("#overviewEvents");
+        mount.replaceChildren();
+        const reviews = events.filter(isReviewEvent)
+            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+            .slice(0, 5);
+        if (!reviews.length) {
+            mount.append(element("div", "feed-empty", "AI code reviews will appear here as review events arrive."));
+            return;
+        }
+        for (const event of reviews) {
+            const item = element("button", "review-item");
+            item.type = "button";
+            item.setAttribute("aria-label", `View review: ${eventTitle(event)}`);
+            const main = element("span", "review-main");
+            const meta = element("span", "review-meta");
+            meta.append(element("span", "repo-tag", event.repo || "Repository unavailable"));
+            meta.append(element("span", "", event.actor || event.source || "Unknown contributor"));
+            main.append(meta, element("span", "review-summary", eventTitle(event)));
+            const badges = element("span", "review-badges");
+            const counts = issueCounts(event);
+            for (const severity of ["critical", "high"]) {
+                if (counts[severity]) badges.append(element("span", `severity-chip ${severity}`, `${counts[severity]} ${severity[0].toUpperCase()}${severity.slice(1)}`));
+            }
+            if (!counts.critical && !counts.high && eventStatus(event) === "success") {
+                badges.append(element("span", "severity-chip passed", "Passed"));
+            } else if (eventStatus(event) === "failed") {
+                badges.append(element("span", "severity-chip failed", "Failed"));
+            }
+            item.append(main, badges);
+            item.addEventListener("click", () => openEventDetails(event));
+            mount.append(item);
+        }
+    }
+
+    function statusForEvent(event) {
+        return eventStatus(event);
+    }
+
+    function eventTitle(event) {
+        if (event.summary) return event.summary;
+        return String(event.type || "Activity").replaceAll(".", " ").replaceAll("_", " ");
+    }
+
+    function eventCard(event) {
+        const status = statusForEvent(event);
+        const card = element("button", `event-card status-${status}`);
+        card.type = "button";
+        card.setAttribute("aria-label", `View event: ${eventTitle(event)}`);
+        const symbol = element("span", "event-symbol");
+        symbol.append(icon(status === "success" ? "check" : status === "failed" ? "fail" : status === "pending" ? "clock" : "activity"));
+        const content = element("span", "event-content");
+        const titleRow = element("span", "event-title-row");
+        titleRow.append(element("span", "event-title", eventTitle(event)));
+        titleRow.append(element("span", `pill ${status}`, statusLabel(status)));
+        content.append(titleRow);
+        const meta = element("span", "event-meta-line");
+        if (event.repo) {
+            const repo = element("span", ""); repo.append(icon("repo"), document.createTextNode(event.repo)); meta.append(repo);
+        }
+        if (event.ref) {
+            const ref = element("span", ""); ref.append(icon("github"), document.createTextNode(event.ref)); meta.append(ref);
+        }
+        if (event.source) {
+            const source = element("span", ""); source.append(icon("agent"), document.createTextNode(event.source)); meta.append(source);
+        }
+        const date = element("span", ""); date.append(icon("clock"), document.createTextNode(`${timeAgo(event.timestamp)} · ${formatDate(event.timestamp, { hour: "numeric", minute: "2-digit" })}`)); meta.append(date);
+        content.append(meta);
+        card.append(symbol, content);
+        const counts = issueCounts(event);
+        const severityList = element("span", "event-severities");
+        let hasCounts = false;
+        for (const severity of SEVERITIES) {
+            if (!counts[severity]) continue;
+            hasCounts = true;
+            severityList.append(element("span", `severity-chip ${severity}`, `${severity[0].toUpperCase()} ${counts[severity]}`));
+        }
+        if (!hasCounts && Array.isArray(event.metadata?.findings)) severityList.append(element("span", "severity-chip", "0 issues"));
+        card.append(severityList);
+        card.addEventListener("click", () => openEventDetails(event));
+        return card;
+    }
+
+    function renderEventList(mount, events, limit = Infinity) {
+        mount.replaceChildren();
+        const items = events.slice(0, limit);
+        if (!items.length) {
+            const empty = element("div", "empty-state");
+            empty.append(element("strong", "", state.error ? "Activity unavailable" : "No events match"), element("span", "", state.error ? "The event service could not be reached. Retry to restore live activity." : "Try widening the time range or changing your search and filters."));
+            mount.append(empty);
+            return;
+        }
+        for (const event of items) mount.append(eventCard(event));
+    }
+
+    function buildFilterSelect(id, label, values, selected, allLabel) {
+        const select = element("select", "select filter-select");
+        select.id = id;
+        select.setAttribute("aria-label", label);
+        const all = element("option", "", allLabel);
+        all.value = "";
+        select.append(all);
+        for (const value of values) {
+            const option = element("option", "", value);
+            option.value = value;
+            select.append(option);
+        }
+        select.value = selected;
+        return select;
+    }
+
+    function timelineFilters(events) {
+        const toolbar = element("div", "toolbar");
+        const searchWrap = element("label", "input-wrap");
+        searchWrap.setAttribute("aria-label", "Search events");
+        searchWrap.append(icon("search"));
+        const search = element("input", "input");
+        search.type = "search"; search.placeholder = "Search events, PRs, findings…"; search.value = state.search;
+        search.setAttribute("aria-label", "Search events");
+        search.addEventListener("input", () => { state.search = search.value; renderTimeline(events); });
+        searchWrap.append(search);
+        toolbar.append(searchWrap);
+        const agents = uniqueValues(events, event => event.source);
+        const repos = uniqueValues(events, event => event.repo);
+        const types = uniqueValues(events, event => event.type);
+        const selects = [
+            ["filterAgent", "Filter by agent/source", agents, state.agent, "All agents"],
+            ["filterRepo", "Filter by repository", repos, state.repo, "All repositories"],
+            ["filterType", "Filter by event type", types, state.type, "All event types"],
+            ["filterStatus", "Filter by execution status", ["success", "failed", "partial", "pending", "info"], state.status, "All statuses"],
+            ["filterSort", "Sort timeline", ["newest", "oldest"], state.sort, "Newest first"]
+        ];
+        for (const [id, label, options, value, allLabel] of selects) {
+            const select = buildFilterSelect(id, label, options, value, allLabel);
+            if (id === "filterSort") {
+                select.innerHTML = "";
+                for (const [optionValue, text] of [["newest", "Newest first"], ["oldest", "Oldest first"]]) {
+                    const option = element("option", "", text); option.value = optionValue; select.append(option);
+                }
+                select.value = state.sort;
+            }
+            select.addEventListener("change", () => {
+                if (id === "filterAgent") state.agent = select.value;
+                if (id === "filterRepo") state.repo = select.value;
+                if (id === "filterType") state.type = select.value;
+                if (id === "filterStatus") state.status = select.value;
+                if (id === "filterSort") state.sort = select.value;
+                renderTimeline(events);
             });
+            toolbar.append(select);
+        }
+        const count = element("span", "toolbar-count");
+        const wrap = element("div", "");
+        wrap.append(toolbar);
+        const result = element("div", "event-list");
+        result.dataset.role = "timeline-results";
+        toolbar.append(count);
+        wrap.append(result);
+        $("#timelineMount").replaceChildren(wrap);
+        renderTimeline(events);
+    }
+
+    function filteredTimelineEvents(events) {
+        const query = state.search.trim().toLowerCase();
+        return events.filter(event => {
+            if (state.agent && event.source !== state.agent) return false;
+            if (state.repo && event.repo !== state.repo) return false;
+            if (state.type && event.type !== state.type) return false;
+            if (state.status && eventStatus(event) !== state.status) return false;
+            if (query) {
+                const haystack = [
+                    event.summary, event.type, event.source, event.repo, event.ref, event.actor,
+                    JSON.stringify(event.metadata || {})
+                ].join(" ").toLowerCase();
+                if (!haystack.includes(query)) return false;
+            }
+            return true;
+        }).sort((a, b) => {
+            const order = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+            return state.sort === "oldest" ? order : -order;
         });
     }
 
-    async function refresh() {
-        const allEvents = await fetchEvents();
-        const uniqueSources = [...new Set(allEvents.map(e => e.source))];
-        renderFilters(uniqueSources);
-        renderStats(allEvents);
-        renderPulse(allEvents);
-        const filtered = currentSource ? allEvents.filter(e => e.source === currentSource) : allEvents;
-        renderEvents(filtered);
+    function renderTimeline(events = selectedEvents()) {
+        const mount = $('[data-role="timeline-results"]');
+        if (!mount) return;
+        const filtered = filteredTimelineEvents(events);
+        renderEventList(mount, filtered);
+        const count = $(".toolbar-count", $("#timelineMount"));
+        if (count) count.textContent = `${filtered.length} events`;
     }
 
+    function renderEntities(events) {
+        const agentMap = new Map();
+        const repoMap = new Map();
+        const peopleMap = new Map();
+        for (const event of events) {
+            const status = eventStatus(event);
+            const counts = issueCounts(event);
+            const issues = SEVERITIES.reduce((total, severity) => total + counts[severity], 0);
+            if (sourceIsAgent(event)) {
+                const item = agentMap.get(event.source) || { name: event.source, executions: 0, success: 0, failed: 0, issues: 0, last: null, events: [] };
+                item.executions++; item.success += status === "success" ? 1 : 0; item.failed += status === "failed" ? 1 : 0; item.issues += issues;
+                if (!item.last || new Date(event.timestamp) > new Date(item.last)) item.last = event.timestamp;
+                item.events.push(event); agentMap.set(event.source, item);
+            }
+            if (event.repo) {
+                const item = repoMap.get(event.repo) || { name: event.repo, reviews: 0, success: 0, failed: 0, issues: 0, last: null, events: [] };
+                item.reviews += event.type?.includes("review") ? 1 : 0; item.success += status === "success" ? 1 : 0; item.failed += status === "failed" ? 1 : 0; item.issues += issues;
+                if (!item.last || new Date(event.timestamp) > new Date(item.last)) item.last = event.timestamp;
+                item.events.push(event); repoMap.set(event.repo, item);
+            }
+            if (event.actor) {
+                const item = peopleMap.get(event.actor) || { name: event.actor, activity: 0, reviews: 0, issues: 0, last: null, repos: new Set(), agents: new Set(), events: [] };
+                item.activity++; item.reviews += event.type?.includes("review") ? 1 : 0; item.issues += issues;
+                if (event.repo) item.repos.add(event.repo);
+                if (sourceIsAgent(event)) item.agents.add(event.source);
+                if (!item.last || new Date(event.timestamp) > new Date(item.last)) item.last = event.timestamp;
+                item.events.push(event); peopleMap.set(event.actor, item);
+            }
+        }
+        const agents = [...agentMap.values()].sort((a, b) => b.executions - a.executions);
+        const repos = [...repoMap.values()].sort((a, b) => b.reviews - a.reviews);
+        const people = [...peopleMap.values()].sort((a, b) => b.activity - a.activity);
+        $("#navTimelineCount").textContent = String(events.length);
+        $("#navAgentCount").textContent = String(agents.length);
+        $("#navRepoCount").textContent = String(repos.length);
+        $("#navPeopleCount").textContent = String(people.length);
+        $("#agentPageCount").textContent = `${agents.length} observed`;
+        $("#repoPageCount").textContent = `${repos.length} observed`;
+        $("#peoplePageCount").textContent = `${people.length} observed`;
+        renderEntityCards($("#agentsGrid"), agents, "agent");
+        renderEntityCards($("#repositoriesGrid"), repos, "repository");
+        renderEntityCards($("#peopleGrid"), people, "person");
+    }
+
+    function renderEntityCards(mount, entities, type) {
+        mount.replaceChildren();
+        if (!entities.length) {
+            const empty = element("div", "empty-state");
+            empty.append(element("strong", "", `No ${type} data yet`), element("span", "", `This view is populated from ${type === "person" ? "event actors" : type === "agent" ? "event sources" : "repository fields"} returned by the event API.`));
+            mount.append(empty);
+            return;
+        }
+        for (const item of entities) {
+            const card = element("article", "entity-card");
+            const top = element("div", "entity-top");
+            const titleBlock = element("div", "");
+            titleBlock.append(element("h3", "entity-title", item.name));
+            titleBlock.append(element("div", "entity-sub", type === "agent" ? "Reported agent source" : type === "repository" ? (item.name.includes("/") ? `Owner: ${item.name.split("/")[0]}` : "Owner not provided by events") : "Recorded event actor"));
+            const isActive = item.last && Date.now() - new Date(item.last).getTime() < 86400000;
+            top.append(titleBlock, element("span", `pill ${type === "agent" && isActive ? "success" : ""}`, type === "agent" ? (isActive ? "Active · 24h" : "Inactive") : type === "repository" ? "Observed" : "Contributor"));
+            card.append(top);
+            const stats = element("div", "entity-stats");
+            const values = type === "agent"
+                ? [["Executions", item.executions], ["Success", item.success], ["Failed", item.failed]]
+                : type === "repository"
+                    ? [["Reviews", item.reviews], ["Issues", item.issues], ["Failed", item.failed]]
+                    : [["Activity", item.activity], ["Reviews", item.reviews], ["Issues", item.issues]];
+            for (const [label, value] of values) {
+                const stat = element("div", "entity-stat");
+                stat.append(element("strong", "", String(value)), element("span", "", label)); stats.append(stat);
+            }
+            card.append(stats);
+            card.append(element("div", "entity-last", item.last ? `Last active ${formatDate(item.last, { dateStyle: "medium", timeStyle: "short" })}` : "Last activity unavailable"));
+            if (type === "person") {
+                const associations = element("div", "entity-last", [
+                    item.repos.size ? `Repositories: ${[...item.repos].join(", ")}` : "",
+                    item.agents.size ? `Agents: ${[...item.agents].join(", ")}` : ""
+                ].filter(Boolean).join(" · ") || "No repository or agent association recorded");
+                card.append(associations);
+            }
+            const action = element("button", "entity-action", "View activity →");
+            action.type = "button";
+            action.addEventListener("click", () => {
+                state.search = item.name;
+                state.agent = ""; state.repo = ""; state.type = ""; state.status = ""; state.sort = "newest";
+                navigate("timeline");
+            });
+            card.append(action);
+            mount.append(card);
+        }
+    }
+
+    function appendDetailField(grid, label, value) {
+        if (value === undefined || value === null || value === "") return;
+        const field = element("div", "detail-field");
+        field.append(element("span", "", label), element("strong", "", String(value)));
+        grid.append(field);
+    }
+
+    function openEventDetails(event) {
+        const content = $("#drawerContent");
+        content.replaceChildren();
+        const status = eventStatus(event);
+        const header = element("div", "detail-group");
+        const pill = element("span", `pill ${status}`, statusLabel(status));
+        header.append(pill);
+        content.append(header);
+        const details = element("div", "detail-group");
+        details.append(element("div", "detail-label", "Execution"));
+        const grid = element("div", "detail-grid");
+        appendDetailField(grid, "Event type", event.type);
+        appendDetailField(grid, "Status", event.status || statusLabel(status));
+        appendDetailField(grid, "Agent / source", event.source);
+        appendDetailField(grid, "Actor", event.actor);
+        appendDetailField(grid, "Repository", event.repo);
+        appendDetailField(grid, "Pull request", event.ref);
+        appendDetailField(grid, "Timestamp", formatDate(event.timestamp, { dateStyle: "full", timeStyle: "long" }));
+        appendDetailField(grid, "Execution ID", event.execution_id);
+        details.append(grid); content.append(details);
+        const summary = element("div", "detail-group");
+        summary.append(element("div", "detail-label", "Review summary"), element("div", "finding-comment", event.summary || "No summary was provided."));
+        content.append(summary);
+        const counts = issueCounts(event);
+        const severityGrid = element("div", "detail-group");
+        severityGrid.append(element("div", "detail-label", "Issue distribution"));
+        const countGrid = element("div", "detail-grid");
+        for (const severity of SEVERITIES) appendDetailField(countGrid, severity[0].toUpperCase() + severity.slice(1), counts[severity]);
+        severityGrid.append(countGrid); content.append(severityGrid);
+        const findings = event.metadata?.findings;
+        if (Array.isArray(findings)) {
+            const findingGroup = element("div", "detail-group");
+            findingGroup.append(element("div", "detail-label", `AI findings · ${findings.length}`));
+            if (findings.length) {
+                const list = element("div", "finding-list");
+                for (const finding of findings) {
+                    const item = element("article", "finding");
+                    const head = element("div", "finding-head");
+                    head.append(element("span", `severity-chip ${normalizeSeverity(finding.severity) || ""}`, String(finding.severity || "Issue")));
+                    const location = [finding.file, finding.line ? `line ${finding.line}` : ""].filter(Boolean).join(" · ");
+                    if (location) head.append(element("span", "finding-path", location));
+                    item.append(head, element("div", "finding-comment", finding.comment || "Comment unavailable."));
+                    if (finding.suggestion) item.append(element("div", "finding-comment", `Suggestion: ${finding.suggestion}`));
+                    list.append(item);
+                }
+                findingGroup.append(list);
+            } else findingGroup.append(element("div", "section-hint", "No findings were recorded for this analysis."));
+            content.append(findingGroup);
+        }
+        const publication = event.metadata?.publication_status || (event.metadata?.github_posted === true ? "published" : event.metadata?.github_posted === false ? "not published" : "not recorded");
+        const publicationGroup = element("div", "detail-group");
+        publicationGroup.append(element("div", "detail-label", "GitHub publication"));
+        const publicationGrid = element("div", "detail-grid");
+        appendDetailField(publicationGrid, "Publication status", publication);
+        appendDetailField(publicationGrid, "Review posted", event.metadata?.github_posted === undefined ? "Not recorded" : event.metadata.github_posted ? "Yes" : "No");
+        publicationGroup.append(publicationGrid);
+        const error = event.metadata?.github_error;
+        if (error) {
+            const errorGrid = element("div", "detail-grid");
+            appendDetailField(errorGrid, "HTTP status", error.status);
+            appendDetailField(errorGrid, "Endpoint", error.endpoint);
+            appendDetailField(errorGrid, "Stage", error.stage);
+            appendDetailField(errorGrid, "GitHub message", error.message);
+            appendDetailField(errorGrid, "Accepted permissions", error.accepted_permissions);
+            publicationGroup.append(errorGrid);
+        }
+        content.append(publicationGroup);
+        const candidateUrl = event.metadata?.github_url || (event.repo?.includes("/") && event.ref?.match(/#(\d+)/) ? `https://github.com/${event.repo}/pull/${event.ref.match(/#(\d+)/)[1]}` : null);
+        let githubUrl = null;
+        if (candidateUrl) {
+            try {
+                const url = new URL(candidateUrl);
+                if (url.protocol === "https:" && url.hostname === "github.com") githubUrl = url.href;
+            } catch { /* Invalid or unavailable event link. */ }
+        }
+        if (githubUrl) {
+            const link = document.createElement("a");
+            link.className = "detail-link"; link.href = githubUrl; link.target = "_blank"; link.rel = "noopener noreferrer";
+            link.append(icon("arrow"), document.createTextNode("Open pull request on GitHub"));
+            content.append(link);
+        }
+        $("#drawerTitle").textContent = eventTitle(event);
+        $("#detailDrawer").classList.add("open");
+        $("#drawerBackdrop").classList.add("open");
+        $("#closeDrawer").focus();
+    }
+
+    function closeDrawer() {
+        $("#detailDrawer").classList.remove("open");
+        $("#drawerBackdrop").classList.remove("open");
+    }
+
+    function navigate(page) {
+        if (!TITLES[page]) return;
+        state.page = page;
+        for (const view of $$(".view")) view.classList.toggle("active", view.dataset.view === page);
+        for (const button of $$(".nav-item")) button.classList.toggle("active", button.dataset.page === page);
+        $("#pageTitle").textContent = TITLES[page][0];
+        $("#pageSubtitle").textContent = TITLES[page][1];
+        $("#sidebar").classList.remove("mobile-open");
+        if (page === "timeline") mountTimeline();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function mountTimeline() {
+        const events = selectedEvents();
+        $("#timelineRangeLabel").textContent = state.range === "all" ? "All recorded activity" : `Last ${$("#globalRange").selectedOptions[0].text}`;
+        timelineFilters(events);
+    }
+
+    function renderDashboard() {
+        const events = selectedEvents();
+        renderKpis(events);
+        renderActivityChart(selectedEvents(state.activityRange), state.activityRange);
+        renderSeverityChart(events);
+        renderExecutionChart(events);
+        renderAgentChart(events);
+        renderEntities(events);
+        renderContributors(events);
+        renderRecentReviews(events);
+        if (state.page === "timeline") mountTimeline();
+        updateHeader();
+    }
+
+    async function refresh(showNotice = false) {
+        const button = $("#refreshButton");
+        button.classList.add("refreshing");
+        const wasError = state.error;
+        try {
+            const response = await fetch(API_URL, { cache: "no-store" });
+            if (!response.ok) throw new Error(`Event API returned ${response.status}`);
+            const payload = await response.json();
+            if (!Array.isArray(payload)) throw new Error("Event API returned an invalid response");
+            const signature = JSON.stringify(payload);
+            const changed = signature !== state.signature;
+            state.events = payload;
+            state.signature = signature;
+            state.error = false;
+            state.loading = false;
+            state.lastSuccess = Date.now();
+            setSystemStatus(true);
+            if (changed) renderDashboard();
+            else updateHeader();
+            if (wasError && !showNotice) showToast("Connection restored");
+            if (showNotice) showToast("Dashboard data refreshed");
+        } catch (error) {
+            const wasAlreadyError = state.error;
+            state.error = true;
+            state.loading = false;
+            setSystemStatus(false);
+            if (!state.events.length) {
+                renderEventList($("#overviewEvents"), []);
+                $("#kpiGrid").replaceChildren(element("div", "error-state", "Event service unavailable"));
+            }
+            if (showNotice || !wasAlreadyError) {
+                showToast(error instanceof Error ? error.message : "Could not load dashboard data");
+            }
+        } finally {
+            button.classList.remove("refreshing");
+        }
+    }
+
+    function bind() {
+        $("#themeSelect").addEventListener("change", event => {
+            applyTheme(event.target.value, true);
+            renderDashboard();
+        });
+        systemThemeQuery.addEventListener("change", () => {
+            if (themePreference === "system") {
+                applyTheme("system");
+                renderDashboard();
+            }
+        });
+        $("#navigation").addEventListener("click", event => {
+            const button = event.target.closest("[data-page]");
+            if (button) navigate(button.dataset.page);
+        });
+        document.addEventListener("click", event => {
+            const button = event.target.closest("[data-navigate]");
+            if (button) navigate(button.dataset.navigate);
+        });
+        $("#globalRange").addEventListener("change", event => {
+            state.range = event.target.value;
+            renderDashboard();
+        });
+        $("#activityRanges").addEventListener("click", event => {
+            const button = event.target.closest("[data-range]");
+            if (!button) return;
+            state.activityRange = button.dataset.range;
+            $$(".range-tab", $("#activityRanges")).forEach(tab => tab.classList.toggle("active", tab === button));
+            renderActivityChart(selectedEvents(state.activityRange), state.activityRange);
+        });
+        $("#refreshButton").addEventListener("click", () => refresh(true));
+        $("#mobileMenu").addEventListener("click", () => $("#sidebar").classList.toggle("mobile-open"));
+        $("#closeDrawer").addEventListener("click", closeDrawer);
+        $("#drawerBackdrop").addEventListener("click", closeDrawer);
+        document.addEventListener("keydown", event => {
+            if (event.key === "Escape") {
+                closeDrawer();
+                $("#sidebar").classList.remove("mobile-open");
+            }
+        });
+    }
+
+    bind();
+    applyTheme(readThemePreference());
+    updateHeader();
     refresh();
-    setInterval(refresh, 5000);
+    setInterval(() => refresh(), POLL_INTERVAL);
+})();
 </script>
 </body>
 </html>

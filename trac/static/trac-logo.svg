@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 430 160" fill="none" role="img" aria-labelledby="title description">
+  <title id="title">TRAC Engineering Intelligence</title>
+  <desc id="description">Cyan magnifying glass surrounding code brackets, alongside the TRAC wordmark.</desc>
+  <defs>
+    <linearGradient id="brand" x1="30" y1="28" x2="139" y2="137" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22D3EE"/>
+      <stop offset="1" stop-color="#0EA5E9"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(0 0)">
+    <circle cx="65.5" cy="61.5" r="44.5" stroke="url(#brand)" stroke-width="3"/>
+    <circle cx="65.5" cy="61.5" r="35.5" stroke="url(#brand)" stroke-width="2.4" opacity=".8"/>
+    <path d="m51 49-18 12.5L51 74M80 49l18 12.5L80 74M69.5 43l-9 37" stroke="url(#brand)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="m96 92 8-8 9 9" stroke="url(#brand)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="m101.5 99.5 7.2-7.2a6 6 0 0 1 8.5 0l25.6 25.6a6 6 0 0 1 0 8.5l-12.7 12.7a6 6 0 0 1-8.5 0L96 113.5a6 6 0 0 1 0-8.5l5.5-5.5Z" stroke="url(#brand)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="m108 104-6 6m15 3-6 6m15 3-6 6m15 3-6 6" stroke="url(#brand)" stroke-width="2.3" stroke-linecap="round" opacity=".85"/>
+  </g>
+  <text x="164" y="77" fill="#F8FAFC" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="54" font-weight="500" letter-spacing="3">TRAC</text>
+  <text x="167" y="106" fill="#A7B0C0" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="15" font-weight="400" letter-spacing=".4">ENGINEERING INTELLIGENCE</text>
+</svg>

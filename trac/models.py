@@ -1,6 +1,7 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Any, Dict, Optional
 from datetime import datetime, timezone
+from pydantic import Field
 
 
 class EventCreate(BaseModel):
@@ -11,6 +12,9 @@ class EventCreate(BaseModel):
     repo: Optional[str] = None
     ref: Optional[str] = None      # e.g. "PR #4", commit SHA
     actor: Optional[str] = None    # e.g. "Dushyanth Gadapala"
+    execution_id: Optional[str] = None
+    status: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class Event(EventCreate):

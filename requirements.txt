@@ -1,7 +1,9 @@
 langgraph
 langchain
 langchain-community
-anthropic
+langchain-text-splitters
+langchain-huggingface
+groq
 PyGithub
 faiss-cpu
 sentence-transformers
