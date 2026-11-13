@@ -4,10 +4,12 @@
   "scripts": {
     "dev": "node -e \"console.log('[TRAC] Starting application...')\" && concurrently --kill-others --names FRONTEND,BACKEND --prefix \"[{name}]\" --prefix-colors cyan,yellow \"pnpm:frontend\" \"pnpm:backend\"",
     "frontend": "vite --host 127.0.0.1 --port 5173 --strictPort",
-    "backend": ".\\venv\\Scripts\\python.exe -m uvicorn trac.main:app --host 127.0.0.1 --port 8000 --reload"
+    "backend": ".\\venv\\Scripts\\python.exe -m uvicorn trac.main:app --host 127.0.0.1 --port 8000 --reload",
+    "test": "vitest run"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
-    "vite": "^7.2.2"
+    "vite": "^7.2.2",
+    "vitest": "^5.1.0"
   }
 }

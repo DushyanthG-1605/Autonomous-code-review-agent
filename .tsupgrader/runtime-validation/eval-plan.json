@@ -1,0 +1,32 @@
+{
+  "generatedAt": "2026-11-13T09:53:00Z",
+  "generatedOnPlatform": "win32",
+  "projectType": "webapp",
+  "setup": [
+    {
+      "command": "pnpm",
+      "args": ["install", "--frozen-lockfile"]
+    }
+  ],
+  "assertions": [
+    {
+      "name": "tests-pass",
+      "kind": "process",
+      "command": "pnpm",
+      "args": ["test"],
+      "verificationMethod": "test-results",
+      "expected": "0",
+      "timeoutSeconds": 120
+    },
+    {
+      "name": "dashboard-serves-home",
+      "kind": "http-probe",
+      "startCommand": "pnpm",
+      "startArgs": ["frontend"],
+      "url": "http://127.0.0.1:5173/dashboard.html",
+      "verificationMethod": "http-status",
+      "expected": "200",
+      "timeoutSeconds": 60
+    }
+  ]
+}
