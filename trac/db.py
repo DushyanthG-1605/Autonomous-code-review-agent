@@ -35,6 +35,45 @@ def init_db():
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_execution_id "
         "ON events (execution_id) WHERE execution_id IS NOT NULL"
     )
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            github_login TEXT NOT NULL UNIQUE,
+            display_name TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS devices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            label TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            revoked_at TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS activity_events (
+            event_id TEXT PRIMARY KEY,
+            schema_version INTEGER NOT NULL,
+            type TEXT NOT NULL,
+            ts TEXT NOT NULL,
+            received_at TEXT NOT NULL,
+            session_id TEXT,
+            user_id INTEGER NOT NULL,
+            repo TEXT,
+            branch TEXT,
+            source TEXT,
+            tool TEXT,
+            data JSON NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_activity_events_user_ts
+            ON activity_events (user_id, ts);
+        CREATE INDEX IF NOT EXISTS idx_activity_events_repo_ts
+            ON activity_events (repo, ts);
+    """)
     conn.commit()
     conn.close()
 
