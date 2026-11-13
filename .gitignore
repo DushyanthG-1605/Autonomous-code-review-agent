@@ -12,11 +12,13 @@ dist/
 
 # Python cache
 __pycache__/
+.pytest_cache/
 *.pyc
 *.pyo
 *.db
 *.sqlite
 *.sqlite3
+*.egg-info/
 
 # IDE
 .vscode/
