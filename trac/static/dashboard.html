@@ -1,326 +1,37 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#090a0d">
-<title>TRAC — Engineering Intelligence</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-    :root {
-        color-scheme: dark;
-        --bg: #090a0d;
-        --sidebar: #0c0d10;
-        --surface: #111317;
-        --surface-raised: #15181d;
-        --surface-hover: #191c22;
-        --line: #22252c;
-        --line-soft: #1a1d23;
-        --text: #e8eaf0;
-        --muted: #9a9eaa;
-        --subtle: #656a76;
-        --amber: #f2b84b;
-        --amber-soft: rgba(242,184,75,.12);
-        --green: #54d6a0;
-        --green-soft: rgba(84,214,160,.12);
-        --red: #ff7777;
-        --red-soft: rgba(255,119,119,.12);
-        --blue: #79aaff;
-        --blue-soft: rgba(121,170,255,.12);
-        --purple: #b6a0ff;
-        --radius: 12px;
-        --mono: "DM Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
-        --sans: "DM Sans", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+<meta name="theme-color" id="themeColorMeta" content="#F6F7F9">
+<title>TRAC | Engineering Intelligence</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="icon" type="image/png" sizes="48x48" href="/static/favicon-48x48.png">
+<link rel="icon" type="image/png" sizes="180x180" href="/static/favicon-180x180.png">
+<link rel="icon" type="image/png" sizes="512x512" href="/static/favicon-512x512.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+<script>
+(() => {
+    try {
+        const stored = localStorage.getItem("trac-theme");
+        const preference = ["light", "dark", "system"].includes(stored) ? stored : "light";
+        const dark = preference === "dark" || (preference === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        document.documentElement.dataset.themePreference = preference;
+    } catch {
+        document.documentElement.dataset.theme = "light";
+        document.documentElement.dataset.themePreference = "light";
     }
-
-    * { box-sizing: border-box; }
-    html { min-width: 320px; background: var(--bg); scroll-behavior: smooth; }
-    body { margin: 0; min-height: 100vh; color: var(--text); background: var(--bg); font: 14px/1.5 var(--sans); }
-    button, input, select { font: inherit; }
-    button { color: inherit; }
-    button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
-        outline: 2px solid var(--amber); outline-offset: 2px;
-    }
-    ::selection { color: #14110a; background: var(--amber); }
-    .app-shell { display: flex; min-height: 100vh; }
-
-    .sidebar {
-        width: 238px; flex: 0 0 238px; display: flex; flex-direction: column;
-        padding: 21px 14px 16px; background: var(--sidebar); border-right: 1px solid var(--line-soft);
-        transition: width .2s ease, flex-basis .2s ease, transform .2s ease; z-index: 20;
-    }
-    .brand { display: flex; align-items: center; gap: 11px; padding: 1px 9px 24px; }
-    .brand-mark {
-        display: grid; width: 31px; height: 31px; place-items: center; color: var(--amber);
-        border: 1px solid rgba(242,184,75,.48); border-radius: 9px; background: var(--amber-soft);
-    }
-    .brand-copy { min-width: 0; }
-    .brand-name { font: 600 13px var(--mono); letter-spacing: .16em; }
-    .brand-sub { margin-top: 2px; color: var(--subtle); font-size: 10px; letter-spacing: .04em; }
-    .nav-label { padding: 10px 10px 7px; color: #555a65; font: 500 9px var(--mono); letter-spacing: .14em; text-transform: uppercase; }
-    .nav { display: grid; gap: 4px; }
-    .nav-item {
-        display: flex; align-items: center; gap: 11px; min-height: 39px; width: 100%;
-        border: 1px solid transparent; border-radius: 8px; padding: 0 10px;
-        color: var(--muted); background: transparent; text-align: left; cursor: pointer;
-        transition: color .16s ease, border-color .16s ease, background .16s ease;
-    }
-    .nav-item:hover { color: var(--text); background: #14161b; }
-    .nav-item.active { color: var(--text); background: #191a1e; border-color: #292a2d; }
-    .nav-item.active .nav-icon { color: var(--amber); }
-    .nav-icon { width: 17px; height: 17px; flex: 0 0 17px; color: #858a95; }
-    .nav-text { flex: 1; font-size: 12px; font-weight: 500; }
-    .nav-count { color: var(--subtle); font: 10px var(--mono); }
-    .sidebar-bottom { margin-top: auto; padding: 15px 9px 3px; border-top: 1px solid var(--line-soft); }
-    .system-state { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
-    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
-    .sidebar-caption { margin-top: 8px; color: var(--subtle); font: 10px var(--mono); }
-
-    .main { width: min(100% - 238px, 1530px); min-width: 0; margin: 0 auto; padding: 28px clamp(22px, 3.2vw, 52px) 48px; }
-    .topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin-bottom: 27px; }
-    .heading-group { min-width: 0; }
-    .eyebrow { display: flex; align-items: center; gap: 8px; color: var(--amber); font: 10px var(--mono); letter-spacing: .12em; text-transform: uppercase; }
-    .eyebrow-rule { width: 17px; height: 1px; background: var(--amber); opacity: .7; }
-    h1 { margin: 8px 0 5px; font-size: clamp(24px, 2.2vw, 30px); line-height: 1.15; font-weight: 600; letter-spacing: -.045em; }
-    .subtitle { color: var(--muted); font-size: 12px; }
-    .top-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
-    .date-label { margin-right: 4px; color: var(--muted); font: 10px var(--mono); white-space: nowrap; }
-    .select, .input, .button, .icon-button {
-        min-height: 36px; border: 1px solid var(--line); border-radius: 8px; color: var(--text);
-        background: var(--surface); transition: border-color .15s ease, background .15s ease, transform .15s ease;
-    }
-    .select { padding: 0 31px 0 10px; color: var(--muted); font-size: 11px; cursor: pointer; }
-    .select:hover, .input:hover, .button:hover, .icon-button:hover { border-color: #3a3e48; background: var(--surface-raised); }
-    .button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 12px; cursor: pointer; font-size: 11px; }
-    .button.primary { color: #16120a; background: var(--amber); border-color: var(--amber); font-weight: 600; }
-    .button.primary:hover { background: #ffcb68; border-color: #ffcb68; }
-    .icon-button { display: inline-grid; width: 36px; place-items: center; cursor: pointer; }
-    .icon-button svg, .button svg { width: 15px; height: 15px; }
-    .refreshing svg { animation: spin .8s linear infinite; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .mobile-menu { display: none; }
-
-    .view { display: none; animation: enter .2s ease both; }
-    .view.active { display: block; }
-    @keyframes enter { from { opacity: .45; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-    .section-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin: 0 0 12px; }
-    .section-heading h2 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
-    .section-hint { color: var(--subtle); font-size: 10px; }
-    .range-tabs { display: flex; gap: 3px; padding: 3px; border: 1px solid var(--line-soft); border-radius: 8px; background: #0d0f12; }
-    .range-tab { border: 0; border-radius: 5px; padding: 5px 8px; color: var(--subtle); background: transparent; font: 10px var(--mono); cursor: pointer; }
-    .range-tab.active { color: var(--text); background: #24262b; }
-
-    .kpi-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 11px; margin-bottom: 20px; }
-    .kpi-card {
-        position: relative; min-width: 0; padding: 14px 15px 13px; overflow: hidden;
-        border: 1px solid var(--line); border-radius: 11px; background: var(--surface);
-        transition: transform .18s ease, border-color .18s ease, background .18s ease;
-    }
-    .kpi-card:hover { transform: translateY(-2px); border-color: #373a42; background: var(--surface-raised); }
-    .kpi-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-    .kpi-label { color: var(--muted); font-size: 10px; font-weight: 500; }
-    .kpi-icon { display: grid; width: 25px; height: 25px; place-items: center; color: var(--amber); border: 1px solid #292a2b; border-radius: 7px; background: #191a1c; }
-    .kpi-icon svg { width: 14px; height: 14px; }
-    .kpi-value { margin-top: 11px; font: 500 25px/1 var(--mono); letter-spacing: -.055em; }
-    .kpi-foot { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-top: 10px; color: var(--subtle); font-size: 9px; }
-    .trend { font: 9px var(--mono); white-space: nowrap; }
-    .trend.up { color: var(--green); }
-    .trend.down { color: var(--red); }
-    .trend.flat { color: var(--subtle); }
-    .kpi-card.success .kpi-icon { color: var(--green); background: var(--green-soft); }
-    .kpi-card.failure .kpi-icon { color: var(--red); background: var(--red-soft); }
-    .kpi-card.issues .kpi-icon { color: var(--amber); }
-    .kpi-card.agents .kpi-icon { color: var(--blue); background: var(--blue-soft); }
-
-    .analytics-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(280px, .9fr); gap: 12px; margin-bottom: 22px; }
-    .panel { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
-    .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 15px 16px 0; }
-    .panel-title { margin: 0; font-size: 11px; font-weight: 600; }
-    .panel-subtitle { margin-top: 3px; color: var(--subtle); font-size: 9px; }
-    .panel-body { padding: 14px 16px 16px; }
-    .chart-box { position: relative; height: 185px; }
-    .chart-box svg { display: block; width: 100%; height: 100%; overflow: visible; }
-    .chart-empty { display: grid; height: 100%; place-items: center; color: var(--subtle); font-size: 11px; text-align: center; }
-    .severity-layout { display: flex; align-items: center; justify-content: center; gap: clamp(15px, 3vw, 38px); min-height: 183px; }
-    .donut-wrap { position: relative; width: 148px; height: 148px; flex: 0 0 148px; }
-    .donut-wrap svg { width: 100%; height: 100%; transform: rotate(-90deg); }
-    .donut-total { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; pointer-events: none; }
-    .donut-total strong { font: 500 24px var(--mono); }
-    .donut-total span { color: var(--subtle); font-size: 9px; }
-    .legend { display: grid; gap: 10px; min-width: 96px; }
-    .legend-item { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; }
-    .legend-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 2px; }
-    .legend-value { margin-left: auto; color: var(--text); font: 10px var(--mono); }
-    .lower-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 12px; margin-bottom: 24px; }
-    .breakdown { display: grid; gap: 13px; }
-    .break-row { display: grid; grid-template-columns: 72px 1fr 30px; gap: 9px; align-items: center; color: var(--muted); font-size: 10px; }
-    .break-track { height: 7px; overflow: hidden; border-radius: 6px; background: #22252b; }
-    .break-fill { height: 100%; min-width: 0; border-radius: inherit; transition: width .35s ease; }
-    .break-count { text-align: right; color: var(--text); font: 10px var(--mono); }
-    .agent-bars { display: grid; gap: 9px; }
-    .agent-row { display: grid; grid-template-columns: minmax(85px, 1.1fr) minmax(45px, 2fr) 25px; gap: 9px; align-items: center; font-size: 10px; }
-    .agent-name { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
-    .agent-track { height: 6px; overflow: hidden; border-radius: 6px; background: #22252b; }
-    .agent-fill { height: 100%; border-radius: inherit; background: var(--amber); }
-    .agent-count { text-align: right; color: var(--text); font: 10px var(--mono); }
-
-    .timeline-section { margin-top: 4px; }
-    .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px; border: 1px solid var(--line); border-radius: 10px 10px 0 0; background: #0e1013; }
-    .input-wrap { position: relative; flex: 1 1 190px; min-width: 150px; }
-    .input-wrap svg { position: absolute; top: 10px; left: 10px; width: 14px; height: 14px; color: var(--subtle); pointer-events: none; }
-    .input { width: 100%; min-height: 34px; padding: 0 10px 0 31px; font-size: 10px; }
-    .filter-select { min-height: 34px; font-size: 10px; }
-    .toolbar-count { margin-left: auto; color: var(--subtle); font: 10px var(--mono); white-space: nowrap; }
-    .event-list { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 10px 10px; background: #0d0f12; }
-    .event-card {
-        position: relative; display: grid; grid-template-columns: 31px minmax(0, 1fr) auto; gap: 11px;
-        padding: 13px 14px; border: 1px solid var(--line-soft); border-radius: 9px;
-        background: var(--surface); cursor: pointer; text-align: left;
-        transition: border-color .16s ease, background .16s ease, transform .16s ease;
-    }
-    .event-card:hover { transform: translateY(-1px); border-color: #363a43; background: var(--surface-raised); }
-    .event-card.status-success { border-left: 2px solid var(--green); }
-    .event-card.status-failed { border-left: 2px solid var(--red); }
-    .event-card.status-pending { border-left: 2px solid var(--amber); }
-    .event-card.status-partial { border-left: 2px solid var(--blue); }
-    .event-symbol { display: grid; width: 29px; height: 29px; place-items: center; border-radius: 8px; color: var(--amber); background: var(--amber-soft); }
-    .event-symbol svg { width: 15px; height: 15px; }
-    .status-success .event-symbol { color: var(--green); background: var(--green-soft); }
-    .status-failed .event-symbol { color: var(--red); background: var(--red-soft); }
-    .status-pending .event-symbol { color: var(--amber); background: var(--amber-soft); }
-    .status-partial .event-symbol { color: var(--blue); background: var(--blue-soft); }
-    .event-content { min-width: 0; }
-    .event-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .event-title { overflow: hidden; color: var(--text); font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-    .pill { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 20px; padding: 2px 7px; color: var(--muted); font: 9px var(--mono); white-space: nowrap; }
-    .pill.success { color: var(--green); border-color: rgba(84,214,160,.22); background: var(--green-soft); }
-    .pill.failed { color: var(--red); border-color: rgba(255,119,119,.22); background: var(--red-soft); }
-    .pill.pending { color: var(--amber); border-color: rgba(242,184,75,.22); background: var(--amber-soft); }
-    .pill.partial { color: var(--blue); border-color: rgba(121,170,255,.22); background: var(--blue-soft); }
-    .event-meta-line { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 5px; color: var(--subtle); font-size: 9px; }
-    .event-meta-line span { display: inline-flex; align-items: center; gap: 4px; }
-    .event-meta-line svg { width: 11px; height: 11px; }
-    .event-severities { display: flex; justify-content: flex-end; align-items: center; gap: 5px; flex-wrap: wrap; }
-    .severity-chip { padding: 3px 6px; border-radius: 5px; color: var(--muted); background: #1c1f24; font: 9px var(--mono); white-space: nowrap; }
-    .severity-chip.critical { color: var(--red); background: var(--red-soft); }
-    .severity-chip.high { color: #ffaf74; background: rgba(255,175,116,.11); }
-    .severity-chip.medium { color: var(--amber); background: var(--amber-soft); }
-    .severity-chip.low { color: var(--blue); background: var(--blue-soft); }
-
-    .page-intro { display: flex; justify-content: space-between; align-items: end; gap: 12px; margin-bottom: 18px; }
-    .page-intro h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -.03em; }
-    .page-intro p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
-    .entity-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; }
-    .entity-card {
-        padding: 15px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
-        transition: transform .16s ease, border-color .16s ease, background .16s ease;
-    }
-    .entity-card:hover { transform: translateY(-2px); border-color: #383b43; background: var(--surface-raised); }
-    .entity-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
-    .entity-title { margin: 0; overflow-wrap: anywhere; font-size: 12px; font-weight: 600; }
-    .entity-sub { margin-top: 4px; color: var(--subtle); font-size: 10px; }
-    .entity-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
-    .entity-stat strong { display: block; font: 500 16px var(--mono); }
-    .entity-stat span { display: block; margin-top: 3px; color: var(--subtle); font-size: 9px; }
-    .entity-last { margin-top: 12px; color: var(--subtle); font-size: 9px; }
-    .entity-action { margin-top: 12px; border: 0; padding: 0; color: var(--amber); background: transparent; font-size: 10px; cursor: pointer; }
-    .entity-action:hover { text-decoration: underline; }
-    .empty-state, .error-state, .loading-state {
-        display: grid; min-height: 150px; place-content: center; justify-items: center; gap: 8px;
-        padding: 24px; border: 1px dashed var(--line); border-radius: 10px; color: var(--subtle); text-align: center;
-    }
-    .empty-state strong, .error-state strong { color: var(--text); font-size: 12px; }
-    .empty-state span, .error-state span { max-width: 360px; font-size: 10px; }
-    .skeleton { height: 92px; border-radius: 10px; background: linear-gradient(90deg, #121418 20%, #1a1d22 38%, #121418 62%); background-size: 300% 100%; animation: shimmer 1.4s ease infinite; }
-    @keyframes shimmer { to { background-position: -150% 0; } }
-
-    .drawer-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.62); opacity: 0; pointer-events: none; transition: opacity .2s ease; }
-    .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
-    .detail-drawer {
-        position: fixed; top: 0; right: 0; z-index: 41; display: flex; flex-direction: column;
-        width: min(540px, 100%); height: 100dvh; border-left: 1px solid var(--line);
-        background: #101216; transform: translateX(102%); transition: transform .22s ease;
-    }
-    .detail-drawer.open { transform: translateX(0); }
-    .drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px; border-bottom: 1px solid var(--line); }
-    .drawer-head h2 { margin: 5px 0 0; font-size: 15px; line-height: 1.4; }
-    .drawer-content { overflow: auto; padding: 18px 20px 28px; }
-    .detail-group { margin-bottom: 20px; }
-    .detail-label { margin-bottom: 8px; color: var(--subtle); font: 9px var(--mono); letter-spacing: .12em; text-transform: uppercase; }
-    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .detail-field { min-width: 0; padding: 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface); }
-    .detail-field span { display: block; color: var(--subtle); font-size: 9px; }
-    .detail-field strong { display: block; margin-top: 4px; overflow-wrap: anywhere; color: var(--text); font-size: 10px; font-weight: 500; }
-    .finding-list { display: grid; gap: 8px; }
-    .finding { padding: 10px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
-    .finding-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
-    .finding-path { color: var(--muted); font: 9px var(--mono); overflow-wrap: anywhere; }
-    .finding-comment { color: var(--text); font-size: 10px; line-height: 1.55; }
-    .detail-link { display: inline-flex; align-items: center; gap: 7px; margin-top: 9px; color: var(--blue); font-size: 10px; text-decoration: none; }
-    .detail-link:hover { text-decoration: underline; }
-    .toast { position: fixed; right: 20px; bottom: 20px; z-index: 60; max-width: min(420px, calc(100vw - 40px)); padding: 11px 14px; border: 1px solid rgba(255,119,119,.35); border-radius: 9px; color: #ffdada; background: #241719; box-shadow: 0 12px 40px rgba(0,0,0,.35); font-size: 11px; opacity: 0; transform: translateY(8px); pointer-events: none; transition: .2s ease; }
-    .toast.show { opacity: 1; transform: translateY(0); }
-    .hidden { display: none !important; }
-
-    @media (max-width: 1200px) {
-        .kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-        .main { width: calc(100% - 238px); padding-inline: 25px; }
-    }
-    @media (max-width: 900px) {
-        .sidebar { width: 68px; flex-basis: 68px; padding-inline: 9px; }
-        .brand { justify-content: center; padding-inline: 0; }
-        .brand-copy, .nav-label, .nav-text, .nav-count, .sidebar-caption { display: none; }
-        .nav-item { justify-content: center; padding: 0; }
-        .sidebar-bottom { display: flex; justify-content: center; padding-inline: 0; }
-        .system-state { font-size: 0; }
-        .main { width: calc(100% - 68px); }
-        .analytics-grid { grid-template-columns: minmax(0, 1.25fr) minmax(250px, .9fr); }
-        .lower-grid { grid-template-columns: 1fr 1fr; }
-    }
-    @media (max-width: 680px) {
-        .app-shell { display: block; }
-        .sidebar { position: fixed; inset: 0 auto 0 0; width: 248px; transform: translateX(-101%); padding: 18px 14px; }
-        .sidebar.mobile-open { transform: translateX(0); box-shadow: 20px 0 60px rgba(0,0,0,.4); }
-        .brand { justify-content: flex-start; padding-inline: 9px; }
-        .brand-copy, .nav-label, .nav-text, .nav-count, .sidebar-caption { display: block; }
-        .nav-item { justify-content: flex-start; padding-inline: 10px; }
-        .sidebar-bottom { display: block; padding-inline: 9px; }
-        .system-state { font-size: 11px; }
-        .main { width: 100%; padding: 18px 14px 32px; }
-        .topbar { align-items: flex-start; gap: 10px; margin-bottom: 21px; }
-        .top-actions { gap: 6px; }
-        .date-label { display: none; }
-        .mobile-menu { display: inline-grid; flex: 0 0 36px; }
-        .top-actions .range-select { max-width: 116px; }
-        .top-actions .refresh-label { display: none; }
-        .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-        .kpi-card { padding: 12px; }
-        .kpi-value { font-size: 22px; }
-        .analytics-grid, .lower-grid { grid-template-columns: 1fr; }
-        .chart-box { height: 160px; }
-        .severity-layout { justify-content: space-evenly; }
-        .toolbar { gap: 6px; padding: 9px; }
-        .input-wrap { flex-basis: 100%; }
-        .filter-select { flex: 1 1 43%; min-width: 0; }
-        .toolbar-count { width: 100%; margin-left: 0; }
-        .event-card { grid-template-columns: 29px minmax(0, 1fr); padding: 11px; }
-        .event-severities { grid-column: 2; justify-content: flex-start; }
-        .entity-grid { grid-template-columns: 1fr; }
-        .page-intro { align-items: flex-start; flex-direction: column; }
-        .detail-drawer { width: 100%; }
-    }
-    @media (prefers-reduced-motion: reduce) {
-        *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
-    }
-</style>
+})();
+</script>
+<link rel="stylesheet" href="/static/dashboard.css?direct">
 </head>
 <body>
 <div class="app-shell">
     <aside class="sidebar" id="sidebar" aria-label="Main navigation">
         <div class="brand">
-            <div class="brand-mark" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19V5h14"/><path d="M8 16h3l3-5h3"/></svg>
+            <div class="brand-mark">
+                <img class="theme-logo" id="brandSymbol" src="/static/trac-symbol-light.svg" alt="">
             </div>
             <div class="brand-copy"><div class="brand-name">TRAC</div><div class="brand-sub">Engineering Intelligence</div></div>
         </div>
@@ -344,30 +55,34 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
             <div class="heading-group">
-                <div class="eyebrow"><span class="eyebrow-rule"></span> Engineering activity</div>
+                <div class="eyebrow"><img class="theme-logo header-logo" id="headerSymbol" src="/static/trac-symbol-light.svg" alt=""> Engineering activity</div>
                 <h1 id="pageTitle">Engineering Intelligence</h1>
                 <div class="subtitle" id="pageSubtitle">A live view of reviews, agent activity, and repository health.</div>
             </div>
             <div class="top-actions">
                 <span class="date-label" id="currentDate"></span>
+                <label class="sr-only" for="themeSelect">Color theme</label>
+                <select class="select theme-select" id="themeSelect" aria-label="Color theme">
+                    <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
+                </select>
                 <select class="select range-select" id="globalRange" aria-label="Dashboard time range">
                     <option value="24h">24 Hours</option><option value="7d">7 Days</option><option value="30d">30 Days</option><option value="all" selected>All Time</option>
                 </select>
-                <button class="button" id="refreshButton" type="button">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.6-2L20 12M4 12l2.8 5a7 7 0 0 0 11.6-2"/></svg><span class="refresh-label">Refresh</span>
+                <button class="icon-button" id="refreshButton" type="button" aria-label="Refresh dashboard" title="Refresh dashboard">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.6-2L20 12M4 12l2.8 5a7 7 0 0 0 11.6-2"/></svg>
                 </button>
             </div>
         </header>
 
         <section class="view active" id="view-overview" data-view="overview">
             <div class="kpi-grid" id="kpiGrid">
-                <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
-                <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+                <div class="skeleton"></div><div class="skeleton"></div>
+                <div class="skeleton"></div><div class="skeleton"></div>
             </div>
             <div class="analytics-grid">
                 <section class="panel">
-                    <div class="panel-head"><div><h2 class="panel-title">Activity over time</h2><div class="panel-subtitle">Event volume across the selected period</div></div><div class="range-tabs" id="activityRanges"><button class="range-tab" data-range="24h">24H</button><button class="range-tab" data-range="7d">7D</button><button class="range-tab active" data-range="30d">30D</button></div></div>
-                    <div class="panel-body"><div class="chart-box" id="activityChart"></div></div>
+                    <div class="panel-head"><div><h2 class="panel-title">Activity over time</h2><div class="panel-subtitle">Commits, pull requests, and issues</div></div><div class="range-tabs" id="activityRanges"><button class="range-tab" data-range="24h">24H</button><button class="range-tab active" data-range="7d">7D</button><button class="range-tab" data-range="30d">30D</button></div></div>
+                    <div class="panel-body"><div class="chart-box" id="activityChart"></div><div class="activity-legend"><span><i class="legend-commit"></i>Commits</span><span><i class="legend-pr"></i>PRs</span><span><i class="legend-issue"></i>Issues</span></div></div>
                 </section>
                 <section class="panel">
                     <div class="panel-head"><div><h2 class="panel-title">Issue severity</h2><div class="panel-subtitle">Findings captured in review metadata</div></div></div>
@@ -376,18 +91,26 @@
             </div>
             <div class="lower-grid">
                 <section class="panel">
-                    <div class="panel-head"><div><h2 class="panel-title">Review execution</h2><div class="panel-subtitle">Publication and execution state</div></div></div>
-                    <div class="panel-body"><div class="breakdown" id="executionChart"></div></div>
+                    <div class="panel-head"><div><h2 class="panel-title">Developer Activity &amp; Code Health</h2><div class="panel-subtitle">Contributor activity in the selected period</div></div></div>
+                    <div class="contributor-table-wrap">
+                        <table class="contributor-table">
+                            <thead><tr><th>Contributor</th><th>Commits &amp; PRs</th><th>Issues Flagged</th><th>Code Health</th></tr></thead>
+                            <tbody id="contributorsTable"><tr><td colspan="4"><div class="skeleton"></div></td></tr></tbody>
+                        </table>
+                    </div>
                 </section>
                 <section class="panel">
-                    <div class="panel-head"><div><h2 class="panel-title">Agent activity</h2><div class="panel-subtitle">Executions by reported event source</div></div><button class="button" data-navigate="agents" type="button">View agents</button></div>
-                    <div class="panel-body"><div class="agent-bars" id="agentChart"></div></div>
+                    <div class="panel-head">
+                        <div><h2 class="panel-title">Recent AI Code Reviews</h2><div class="panel-subtitle">Latest review activity from your repositories</div></div>
+                        <button class="panel-link" data-navigate="timeline" type="button">View full timeline →</button>
+                    </div>
+                    <div class="review-feed" id="overviewEvents"><div class="skeleton"></div><div class="skeleton"></div></div>
                 </section>
             </div>
-            <section class="timeline-section">
-                <div class="section-heading"><h2>Recent activity</h2><button class="button" data-navigate="timeline" type="button">Full timeline <span aria-hidden="true">→</span></button></div>
-                <div class="event-list" id="overviewEvents"><div class="skeleton"></div><div class="skeleton"></div></div>
-            </section>
+            <div class="compatibility-hooks" aria-hidden="true">
+                <div id="executionChart"></div>
+                <div id="agentChart"></div>
+            </div>
         </section>
 
         <section class="view" id="view-timeline" data-view="timeline">
@@ -424,7 +147,7 @@
     const API_URL = "/api/events?limit=200";
     const POLL_INTERVAL = 5000;
     const SEVERITIES = ["critical", "high", "medium", "low"];
-    const SEVERITY_COLORS = { critical: "#ff7777", high: "#ffad72", medium: "#f2b84b", low: "#79aaff" };
+    const SEVERITY_COLORS = { critical: "--critical", high: "--high", medium: "--medium", low: "--low" };
     const TITLES = {
         overview: ["Engineering Intelligence", "A live view of reviews, agent activity, and repository health."],
         timeline: ["Timeline", "Search, filter, and inspect reported engineering activity."],
@@ -433,12 +156,16 @@
         people: ["People", "Contributors and actors explicitly recorded in events."]
     };
     const state = {
-        events: [], range: "all", activityRange: "30d", page: "overview",
+        events: [], range: "all", activityRange: "7d", page: "overview",
         search: "", agent: "", repo: "", type: "", status: "", sort: "newest",
         loading: true, error: false, lastSuccess: null, signature: null, toastTimer: null
     };
+    const THEME_STORAGE_KEY = "trac-theme";
+    const systemThemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    let themePreference = "light";
     const $ = (selector, root = document) => root.querySelector(selector);
     const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+    const cssColor = token => getComputedStyle(document.documentElement).getPropertyValue(token).trim();
     const iconPaths = {
         activity: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
         check: '<path d="m5 12 4 4L19 6"/>',
@@ -472,6 +199,36 @@
         if (className) node.className = className;
         if (text !== undefined && text !== null) node.textContent = text;
         return node;
+    }
+
+    function bindChartTooltip(container, target, text) {
+        let tooltip = $(".chart-tooltip", container);
+        if (!tooltip) {
+            tooltip = element("div", "chart-tooltip");
+            tooltip.setAttribute("role", "tooltip");
+            tooltip.setAttribute("aria-hidden", "true");
+            container.append(tooltip);
+        }
+        const show = () => {
+            tooltip.textContent = text;
+            tooltip.classList.add("visible");
+            tooltip.setAttribute("aria-hidden", "false");
+        };
+        const hide = () => {
+            tooltip.classList.remove("visible");
+            tooltip.setAttribute("aria-hidden", "true");
+        };
+        target.addEventListener("pointerenter", show);
+        target.addEventListener("pointerleave", hide);
+        target.addEventListener("focus", show);
+        target.addEventListener("blur", hide);
+        target.addEventListener("pointermove", event => {
+            const bounds = container.getBoundingClientRect();
+            const left = Math.max(8, Math.min(event.clientX - bounds.left + 12, bounds.width - tooltip.offsetWidth - 8));
+            const top = Math.max(8, event.clientY - bounds.top - tooltip.offsetHeight - 10);
+            tooltip.style.left = `${left}px`;
+            tooltip.style.top = `${top}px`;
+        });
     }
 
     function formatDate(iso, options = {}) {
@@ -577,6 +334,36 @@
             /^pr\s*#\d+/i.test(String(event.ref || ""));
     }
 
+    function isPullRequestEvent(event) {
+        const type = String(event.type || "").toLowerCase();
+        return isReviewEvent(event) || type.includes("pull_request") || type.includes("pullrequest") ||
+            /(?:^|[._])pr(?:[._]|$)/.test(type);
+    }
+
+    function isCommitEvent(event) {
+        return String(event.type || "").toLowerCase().includes("commit") && !isPullRequestEvent(event);
+    }
+
+    function countCriticalHighIssues(events) {
+        return events.reduce((total, event) => {
+            const counts = issueCounts(event);
+            return total + counts.critical + counts.high;
+        }, 0);
+    }
+
+    function countPullRequests(events) {
+        return events.filter(isPullRequestEvent).length;
+    }
+
+    function countCommits(events) {
+        return events.filter(isCommitEvent).length;
+    }
+
+    function codeQualityPassRate(events) {
+        const reviews = events.filter(isReviewEvent);
+        return reviews.length ? reviews.filter(event => eventStatus(event) === "success").length / reviews.length * 100 : 0;
+    }
+
     function countIssues(events) {
         return events.reduce((sum, event) => {
             const counts = issueCounts(event);
@@ -592,10 +379,37 @@
         state.toastTimer = setTimeout(() => toast.classList.remove("show"), 4200);
     }
 
+    function readThemePreference() {
+        try {
+            const preference = localStorage.getItem(THEME_STORAGE_KEY);
+            return ["light", "dark", "system"].includes(preference) ? preference : "light";
+        } catch {
+            return "light";
+        }
+    }
+
+    function applyTheme(preference, savePreference = false) {
+        themePreference = ["light", "dark", "system"].includes(preference) ? preference : "system";
+        const dark = themePreference === "dark" || (themePreference === "system" && systemThemeQuery.matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        document.documentElement.dataset.themePreference = themePreference;
+        $("#themeSelect").value = themePreference;
+        const symbolPath = dark ? "/static/trac-symbol.svg" : "/static/trac-symbol-light.svg";
+        $$(".theme-logo").forEach(image => { image.src = symbolPath; });
+        const themeColor = document.querySelector('meta[name="theme-color"]');
+        if (themeColor) themeColor.content = cssColor("--bg");
+        if (savePreference) {
+            try {
+                localStorage.setItem(THEME_STORAGE_KEY, themePreference);
+            } catch {
+                showToast("Theme changed, but this browser could not save the preference");
+            }
+        }
+    }
+
     function setSystemStatus(connected) {
         $("#systemLabel").textContent = connected ? "API connected" : "Connection issue";
-        $("#systemDot").style.background = connected ? "var(--green)" : "var(--red)";
-        $("#systemDot").style.boxShadow = connected ? "0 0 0 3px var(--green-soft)" : "0 0 0 3px var(--red-soft)";
+        $("#systemDot").style.background = connected ? "var(--success)" : "var(--critical)";
     }
 
     function updateHeader() {
@@ -608,22 +422,18 @@
         if (!oldValue && currentValue === 0) return { text: "No change", kind: "flat" };
         if (!oldValue) return { text: "New activity", kind: "up" };
         const change = Math.round(((currentValue - oldValue) / oldValue) * 100);
-        return { text: `${change > 0 ? "+" : ""}${change}% vs prior`, kind: change > 0 ? "up" : change < 0 ? "down" : "flat" };
+        return { text: `${change > 0 ? "+" : ""}${change}% vs last period`, kind: change > 0 ? "up" : change < 0 ? "down" : "flat" };
     }
 
     function renderKpis(events) {
         const previous = previousPeriodEvents(state.range);
-        const successes = events.filter(event => isReviewEvent(event) && eventStatus(event) === "success").length;
-        const failures = events.filter(event => eventStatus(event) === "failed").length;
-        const agents = uniqueValues(events.filter(sourceIsAgent), event => event.source);
-        const repositories = uniqueValues(events, event => event.repo);
+        const contributors = uniqueValues(events, event => event.actor);
+        const analyzedCount = list => countPullRequests(list) + countCommits(list);
         const currentMetrics = [
-            { label: "Total events", value: events.length, description: "Events in selected period", icon: "activity", kind: "", metric: "total", calc: list => list.length },
-            { label: "Successful reviews", value: successes, description: "Reviews fully completed", icon: "check", kind: "success", metric: "success", calc: list => list.filter(event => isReviewEvent(event) && eventStatus(event) === "success").length },
-            { label: "Failed executions", value: failures, description: "Execution or publish failures", icon: "fail", kind: "failure", metric: "failure", calc: list => list.filter(event => eventStatus(event) === "failed").length },
-            { label: "Issues detected", value: countIssues(events), description: "Findings in recorded reviews", icon: "issue", kind: "issues", metric: "issues", calc: countIssues },
-            { label: "Active agents", value: agents.length, description: "Distinct reporting agents", icon: "agent", kind: "agents", metric: "agents", calc: list => uniqueValues(list.filter(sourceIsAgent), event => event.source).length },
-            { label: "Connected repositories", value: repositories.length, description: "Repositories with activity", icon: "repo", kind: "", metric: "repos", calc: list => uniqueValues(list, event => event.repo).length }
+            { label: "PRs & Commits Analyzed", value: `${countPullRequests(events)} PRs · ${countCommits(events)} commits`, description: "Analyzed in selected period", icon: "activity", kind: "", calc: analyzedCount },
+            { label: "Code Quality Pass Rate", value: `${Math.round(codeQualityPassRate(events))}%`, description: "Completed reviews without failure", icon: "check", kind: "success", calc: codeQualityPassRate },
+            { label: "Open Critical / High Issues", value: countCriticalHighIssues(events).toLocaleString(), description: "Critical and high findings", icon: "issue", kind: "issues", calc: countCriticalHighIssues },
+            { label: "Active Contributors", value: contributors.length.toLocaleString(), description: "Distinct contributors in period", icon: "person", kind: "agents", calc: list => uniqueValues(list, event => event.actor).length }
         ];
         const grid = $("#kpiGrid");
         grid.replaceChildren();
@@ -634,15 +444,13 @@
             const badge = element("span", "kpi-icon");
             badge.append(icon(metric.icon));
             top.append(badge);
-            card.append(top, element("div", "kpi-value", metric.value.toLocaleString()), element("div", "kpi-foot"));
+            card.append(top, element("div", "kpi-value", metric.value), element("div", "kpi-foot"));
             const foot = $(".kpi-foot", card);
             foot.append(element("span", "", metric.description));
-            if (previous) {
-                const trend = previous.length
-                    ? trendText(metric.value, metric.calc(previous))
-                    : { text: "No prior activity", kind: "flat" };
-                foot.append(element("span", `trend ${trend.kind}`, trend.text));
-            }
+            const trend = previous?.length
+                ? trendText(metric.calc(events), metric.calc(previous))
+                : { text: "No prior period", kind: "flat" };
+            foot.append(element("span", `trend ${trend.kind}`, trend.text));
             grid.append(card);
         }
     }
@@ -651,7 +459,7 @@
         const box = $("#activityChart");
         box.replaceChildren();
         const config = range === "24h" ? { count: 24, mode: "hour" } : { count: range === "7d" ? 7 : 30, mode: "day" };
-        const buckets = Array(config.count).fill(0);
+        const buckets = Array.from({ length: config.count }, () => ({ commits: 0, prs: 0, issues: 0 }));
         const now = new Date();
         const start = new Date(now);
         if (config.mode === "hour") {
@@ -667,67 +475,80 @@
             const offset = config.mode === "hour"
                 ? Math.floor((date.getTime() - start.getTime()) / 3600000)
                 : Math.floor((new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime() - new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime()) / 86400000);
-            if (offset >= 0 && offset < buckets.length) buckets[offset]++;
+            if (offset >= 0 && offset < buckets.length) {
+                if (isCommitEvent(event)) buckets[offset].commits++;
+                if (isPullRequestEvent(event)) buckets[offset].prs++;
+                buckets[offset].issues += countIssues([event]);
+            }
         }
         const width = 720, height = 180, pad = { left: 28, right: 12, top: 12, bottom: 24 };
         const chartWidth = width - pad.left - pad.right, chartHeight = height - pad.top - pad.bottom;
-        const max = Math.max(...buckets, 1);
+        const totals = buckets.map(bucket => bucket.commits + bucket.prs + bucket.issues);
+        const max = Math.max(...totals, 1);
+        const series = [
+            { key: "commits", color: cssColor("--accent"), label: "Commits" },
+            { key: "prs", color: cssColor("--medium"), label: "PRs" },
+            { key: "issues", color: cssColor("--high"), label: "Issues" }
+        ];
         const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
         svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-        const defs = document.createElementNS(svg.namespaceURI, "defs");
-        defs.innerHTML = '<linearGradient id="activityFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#f2b84b" stop-opacity=".24"/><stop offset="100%" stop-color="#f2b84b" stop-opacity="0"/></linearGradient>';
-        svg.append(defs);
+        svg.setAttribute("role", "img");
+        svg.setAttribute("aria-label", "Stacked activity bars for commits, pull requests, and issues");
         for (let i = 0; i <= 3; i++) {
             const y = pad.top + chartHeight * i / 3;
             const line = document.createElementNS(svg.namespaceURI, "line");
             line.setAttribute("x1", pad.left); line.setAttribute("x2", width - pad.right);
             line.setAttribute("y1", y); line.setAttribute("y2", y);
-            line.setAttribute("stroke", "#24272e"); line.setAttribute("stroke-dasharray", "3 5");
+            line.setAttribute("stroke", cssColor("--border")); line.setAttribute("stroke-dasharray", "3 5");
             svg.append(line);
             const label = document.createElementNS(svg.namespaceURI, "text");
             label.setAttribute("x", 1); label.setAttribute("y", y + 3);
-            label.setAttribute("fill", "#656a76"); label.setAttribute("font-size", "9");
-            label.setAttribute("font-family", "DM Mono, monospace");
+            label.classList.add("chart-axis-label");
             label.textContent = String(Math.ceil(max * (3 - i) / 3));
             svg.append(label);
         }
-        const points = buckets.map((value, index) => {
-            const x = pad.left + chartWidth * index / Math.max(buckets.length - 1, 1);
-            const y = pad.top + chartHeight - (value / max) * chartHeight;
-            return { x, y, value, index };
-        });
-        const area = document.createElementNS(svg.namespaceURI, "path");
-        area.setAttribute("d", `M ${points[0].x} ${pad.top + chartHeight} L ${points.map(point => `${point.x} ${point.y}`).join(" L ")} L ${points.at(-1).x} ${pad.top + chartHeight} Z`);
-        area.setAttribute("fill", "url(#activityFill)");
-        svg.append(area);
-        const path = document.createElementNS(svg.namespaceURI, "path");
-        path.setAttribute("d", points.map((point, index) => `${index ? "L" : "M"} ${point.x} ${point.y}`).join(" "));
-        path.setAttribute("fill", "none"); path.setAttribute("stroke", "#f2b84b"); path.setAttribute("stroke-width", "2");
-        path.setAttribute("stroke-linecap", "round"); path.setAttribute("stroke-linejoin", "round");
-        svg.append(path);
-        for (const point of points) {
-            const circle = document.createElementNS(svg.namespaceURI, "circle");
-            circle.setAttribute("cx", point.x); circle.setAttribute("cy", point.y); circle.setAttribute("r", point.value ? "3.2" : "1.8");
-            circle.setAttribute("fill", point.value ? "#f2b84b" : "#4a4e57");
-            circle.setAttribute("stroke", "#111317"); circle.setAttribute("stroke-width", "1.5");
-            const title = document.createElementNS(svg.namespaceURI, "title");
-            const date = config.mode === "hour" ? new Date(start.getTime() + point.index * 3600000) : new Date(start.getTime() + point.index * 86400000);
-            title.textContent = `${formatDate(date, config.mode === "hour" ? { hour: "numeric", month: "short", day: "numeric" } : { month: "short", day: "numeric" })}: ${point.value} events`;
-            circle.append(title); svg.append(circle);
+        const bars = document.createElementNS(svg.namespaceURI, "g");
+        bars.setAttribute("id", "activityFill");
+        svg.append(bars);
+        const slotWidth = chartWidth / buckets.length;
+        const barWidth = Math.min(20, slotWidth * .58);
+        for (let index = 0; index < buckets.length; index++) {
+            const bucket = buckets[index];
+            const date = config.mode === "hour" ? new Date(start.getTime() + index * 3600000) : new Date(start.getTime() + index * 86400000);
+            let stackHeight = 0;
+            const roundedTopIndex = series.map(item => bucket[item.key] > 0).lastIndexOf(true);
+            series.forEach((item, seriesIndex) => {
+                const value = bucket[item.key];
+                if (!value) return;
+                const segmentHeight = value / max * chartHeight;
+                const rect = document.createElementNS(svg.namespaceURI, "rect");
+                const x = pad.left + slotWidth * index + (slotWidth - barWidth) / 2;
+                const y = pad.top + chartHeight - stackHeight - segmentHeight;
+                rect.setAttribute("x", x); rect.setAttribute("y", y);
+                rect.setAttribute("width", barWidth); rect.setAttribute("height", Math.max(segmentHeight, 1));
+                rect.setAttribute("fill", item.color);
+                rect.setAttribute("rx", seriesIndex === roundedTopIndex ? "4" : "0");
+                const title = document.createElementNS(svg.namespaceURI, "title");
+                title.textContent = `${formatDate(date, config.mode === "hour" ? { hour: "numeric", month: "short", day: "numeric" } : { month: "short", day: "numeric" })} · ${item.label}: ${value}`;
+                rect.append(title); bars.append(rect);
+                bindChartTooltip(box, rect, title.textContent);
+                stackHeight += segmentHeight;
+            });
         }
         const labelIndexes = new Set([0, Math.floor((buckets.length - 1) / 3), Math.floor(2 * (buckets.length - 1) / 3), buckets.length - 1]);
         for (const index of labelIndexes) {
             const date = config.mode === "hour" ? new Date(start.getTime() + index * 3600000) : new Date(start.getTime() + index * 86400000);
             const label = document.createElementNS(svg.namespaceURI, "text");
-            label.setAttribute("x", points[index].x); label.setAttribute("y", height - 4);
-            label.setAttribute("fill", "#656a76"); label.setAttribute("font-size", "9");
+            label.setAttribute("x", pad.left + slotWidth * index + slotWidth / 2); label.setAttribute("y", height - 4);
+            label.classList.add("chart-axis-label");
             label.setAttribute("text-anchor", index === 0 ? "start" : index === buckets.length - 1 ? "end" : "middle");
-            label.setAttribute("font-family", "DM Mono, monospace");
             label.textContent = formatDate(date, config.mode === "hour" ? { hour: "numeric" } : { month: "short", day: "numeric" });
             svg.append(label);
         }
         if (!events.length) {
             const note = element("div", "chart-empty", "No events in this period yet");
+            note.style.position = "absolute";
+            note.style.inset = "0";
             box.append(note);
         }
         box.append(svg);
@@ -745,24 +566,27 @@
         const wrap = element("div", "donut-wrap");
         const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
         svg.setAttribute("viewBox", "0 0 120 120");
-        const circumference = 2 * Math.PI * 43;
+        const radius = 44, strokeWidth = 22;
+        const circumference = 2 * Math.PI * radius;
         const base = document.createElementNS(svg.namespaceURI, "circle");
-        base.setAttribute("cx", "60"); base.setAttribute("cy", "60"); base.setAttribute("r", "43");
-        base.setAttribute("fill", "none"); base.setAttribute("stroke", "#262930"); base.setAttribute("stroke-width", "11");
+        base.setAttribute("cx", "60"); base.setAttribute("cy", "60"); base.setAttribute("r", String(radius));
+        base.setAttribute("fill", "none"); base.setAttribute("stroke", cssColor("--border")); base.setAttribute("stroke-width", String(strokeWidth));
         svg.append(base);
         let offset = 0;
         if (total) {
             for (const severity of SEVERITIES) {
                 if (!counts[severity]) continue;
                 const circle = document.createElementNS(svg.namespaceURI, "circle");
-                const length = circumference * counts[severity] / total;
-                circle.setAttribute("cx", "60"); circle.setAttribute("cy", "60"); circle.setAttribute("r", "43");
-                circle.setAttribute("fill", "none"); circle.setAttribute("stroke", SEVERITY_COLORS[severity]);
-                circle.setAttribute("stroke-width", "11"); circle.setAttribute("stroke-dasharray", `${length} ${circumference - length}`);
-                circle.setAttribute("stroke-dashoffset", String(-offset)); circle.setAttribute("stroke-linecap", "butt");
+                const segmentLength = circumference * counts[severity] / total;
+                const length = Math.max(0, segmentLength - 2);
+                circle.setAttribute("cx", "60"); circle.setAttribute("cy", "60"); circle.setAttribute("r", String(radius));
+                circle.setAttribute("fill", "none"); circle.setAttribute("stroke", cssColor(SEVERITY_COLORS[severity]));
+                circle.setAttribute("stroke-width", String(strokeWidth)); circle.setAttribute("stroke-dasharray", `${length} ${circumference - length}`);
+                circle.setAttribute("stroke-dashoffset", String(-offset)); circle.setAttribute("stroke-linecap", "round");
                 const title = document.createElementNS(svg.namespaceURI, "title");
                 title.textContent = `${severity}: ${counts[severity]}`;
-                circle.append(title); svg.append(circle); offset += length;
+                circle.append(title); svg.append(circle); offset += segmentLength;
+                bindChartTooltip(mount, circle, title.textContent);
             }
         }
         wrap.append(svg);
@@ -772,8 +596,8 @@
         mount.append(wrap);
         const legend = element("div", "legend");
         for (const severity of SEVERITIES) {
-            const row = element("div", "legend-item");
-            const dot = element("span", "legend-dot"); dot.style.background = SEVERITY_COLORS[severity];
+            const row = element("div", `legend-item${counts[severity] === 0 ? " zero" : ""}`);
+            const dot = element("span", "legend-dot"); dot.style.background = cssColor(SEVERITY_COLORS[severity]);
             row.append(dot, element("span", "", severity[0].toUpperCase() + severity.slice(1)), element("strong", "legend-value", counts[severity].toLocaleString()));
             legend.append(row);
         }
@@ -791,10 +615,10 @@
         };
         const max = Math.max(...Object.values(counts), 1);
         const definitions = [
-            ["Completed", counts.success, "var(--green)"],
-            ["Failed", counts.failed, "var(--red)"],
-            ["Pending", counts.pending, "var(--amber)"],
-            ["Analysis complete", counts.partial, "var(--blue)"]
+            ["Completed", counts.success, cssColor("--success")],
+            ["Failed", counts.failed, cssColor("--critical")],
+            ["Pending", counts.pending, cssColor("--high")],
+            ["Analysis complete", counts.partial, cssColor("--medium")]
         ];
         for (const [label, count, color] of definitions) {
             const row = element("div", "break-row");
@@ -826,6 +650,87 @@
             const fill = element("div", "agent-fill"); fill.style.width = `${count / max * 100}%`;
             track.append(fill); row.append(track, element("span", "agent-count", String(count)));
             mount.append(row);
+        }
+    }
+
+    function renderContributors(events) {
+        const mount = $("#contributorsTable");
+        mount.replaceChildren();
+        const contributors = new Map();
+        for (const event of events) {
+            if (!event.actor) continue;
+            const person = contributors.get(event.actor) || { name: event.actor, commits: 0, prs: 0, issues: 0, critical: 0, high: 0, activity: 0 };
+            if (isCommitEvent(event)) person.commits++;
+            if (isPullRequestEvent(event)) person.prs++;
+            const counts = issueCounts(event);
+            person.issues += SEVERITIES.reduce((sum, severity) => sum + counts[severity], 0);
+            person.critical += counts.critical;
+            person.high += counts.high;
+            person.activity++;
+            contributors.set(event.actor, person);
+        }
+        const people = [...contributors.values()].sort((a, b) => b.activity - a.activity).slice(0, 7);
+        if (!people.length) {
+            const row = element("tr");
+            const cell = element("td", "section-hint", "No contributor activity recorded yet.");
+            cell.colSpan = 4;
+            row.append(cell);
+            mount.append(row);
+            return;
+        }
+        for (const person of people) {
+            const row = element("tr");
+            const contributor = element("td");
+            const identity = element("div", "contributor-person");
+            const initials = person.name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join("").toUpperCase();
+            identity.append(element("span", "contributor-avatar", initials), element("span", "", person.name));
+            contributor.append(identity);
+            const activity = element("td");
+            activity.append(element("span", "contributor-count", `${person.commits} commits · ${person.prs} PRs`));
+            const issues = element("td");
+            issues.append(element("span", "contributor-count", String(person.issues)));
+            const health = person.critical
+                ? ["At Risk", "risk"]
+                : person.issues || person.high ? ["Needs Review", "review"] : ["Healthy", "healthy"];
+            const statusCell = element("td");
+            statusCell.append(element("span", `health-pill ${health[1]}`, health[0]));
+            row.append(contributor, activity, issues, statusCell);
+            mount.append(row);
+        }
+    }
+
+    function renderRecentReviews(events) {
+        const mount = $("#overviewEvents");
+        mount.replaceChildren();
+        const reviews = events.filter(isReviewEvent)
+            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+            .slice(0, 5);
+        if (!reviews.length) {
+            mount.append(element("div", "feed-empty", "AI code reviews will appear here as review events arrive."));
+            return;
+        }
+        for (const event of reviews) {
+            const item = element("button", "review-item");
+            item.type = "button";
+            item.setAttribute("aria-label", `View review: ${eventTitle(event)}`);
+            const main = element("span", "review-main");
+            const meta = element("span", "review-meta");
+            meta.append(element("span", "repo-tag", event.repo || "Repository unavailable"));
+            meta.append(element("span", "", event.actor || event.source || "Unknown contributor"));
+            main.append(meta, element("span", "review-summary", eventTitle(event)));
+            const badges = element("span", "review-badges");
+            const counts = issueCounts(event);
+            for (const severity of ["critical", "high"]) {
+                if (counts[severity]) badges.append(element("span", `severity-chip ${severity}`, `${counts[severity]} ${severity[0].toUpperCase()}${severity.slice(1)}`));
+            }
+            if (!counts.critical && !counts.high && eventStatus(event) === "success") {
+                badges.append(element("span", "severity-chip passed", "Passed"));
+            } else if (eventStatus(event) === "failed") {
+                badges.append(element("span", "severity-chip failed", "Failed"));
+            }
+            item.append(main, badges);
+            item.addEventListener("click", () => openEventDetails(event));
+            mount.append(item);
         }
     }
 
@@ -1203,7 +1108,8 @@
         renderExecutionChart(events);
         renderAgentChart(events);
         renderEntities(events);
-        renderEventList($("#overviewEvents"), [...events].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)), 5);
+        renderContributors(events);
+        renderRecentReviews(events);
         if (state.page === "timeline") mountTimeline();
         updateHeader();
     }
@@ -1247,6 +1153,16 @@
     }
 
     function bind() {
+        $("#themeSelect").addEventListener("change", event => {
+            applyTheme(event.target.value, true);
+            renderDashboard();
+        });
+        systemThemeQuery.addEventListener("change", () => {
+            if (themePreference === "system") {
+                applyTheme("system");
+                renderDashboard();
+            }
+        });
         $("#navigation").addEventListener("click", event => {
             const button = event.target.closest("[data-page]");
             if (button) navigate(button.dataset.page);
@@ -1279,6 +1195,7 @@
     }
 
     bind();
+    applyTheme(readThemePreference());
     updateHeader();
     refresh();
     setInterval(() => refresh(), POLL_INTERVAL);

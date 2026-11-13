@@ -1,17 +1,22 @@
 # Environment variables
 .env
 .env.local
+.env.*
 
 # Virtual environment
 venv/
 env/
 ENV/
 node_modules/
+dist/
 
 # Python cache
 __pycache__/
 *.pyc
 *.pyo
+*.db
+*.sqlite
+*.sqlite3
 
 # IDE
 .vscode/
@@ -23,5 +28,7 @@ Thumbs.db
 
 # Logs
 *.log
+logs/
+screenshots/
 
 trac/trac.db
