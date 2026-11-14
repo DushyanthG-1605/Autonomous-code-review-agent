@@ -159,6 +159,17 @@ def _apply_migrations(conn):
                 VALUES (4, datetime('now'))
                 """
             )
+        if 5 not in applied:
+            migration_path = MIGRATIONS_DIR / "005_dashboard_device_activity.sql"
+            for statement in migration_path.read_text(encoding="utf-8").split(";"):
+                if statement.strip():
+                    conn.execute(statement)
+            conn.execute(
+                """
+                INSERT INTO schema_migrations (version, applied_at)
+                VALUES (5, datetime('now'))
+                """
+            )
         conn.commit()
     except Exception:
         conn.rollback()

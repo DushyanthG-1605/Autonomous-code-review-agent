@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f8fa">
+  <title>TRAC — Engineering Intelligence</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/dashboard-v2.css">
+  <script defer src="/static/dashboard-v2.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
+      <a class="brand" href="/" aria-label="TRAC overview">
+        <img id="brandLogo" src="/static/trac-logo-light.svg" alt="TRAC">
+        <span>ENGINEERING INTELLIGENCE</span>
+      </a>
+      <nav class="nav-list">
+        <button class="nav-item active" data-page="overview"><span>◫</span>Overview</button>
+        <button class="nav-item" data-page="activity"><span>⌁</span>Live Activity</button>
+        <button class="nav-item" data-page="projects"><span>▦</span>Projects</button>
+        <button class="nav-item" data-page="tasks"><span>☷</span>Tasks</button>
+        <button class="nav-item" data-page="integrate"><span>＋</span>Integrate Skill</button>
+        <button class="nav-item" data-page="connections"><span>⌘</span>Connections</button>
+        <button class="nav-item" data-page="settings"><span>⚙</span>Settings</button>
+      </nav>
+      <div class="sidebar-foot">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span id="streamStatus">Not connected</span>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <button class="menu-button" id="menuButton" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+        <div class="breadcrumb"><span>Workspace</span><span class="crumb-separator">/</span><strong id="currentPageLabel">Overview</strong></div>
+        <div class="topbar-actions">
+          <label class="sr-only" for="projectFilter">Project</label>
+          <select id="projectFilter" class="control project-select" aria-label="Select project">
+            <option value="">All connected projects</option>
+          </select>
+          <button class="button button-quiet" id="addCredentialButton">＋ Add project</button>
+          <span class="connection-pill" id="connectionPill"><i></i><span>Disconnected</span></span>
+          <label class="sr-only" for="themeSelect">Theme</label>
+          <select id="themeSelect" class="control theme-select" aria-label="Color theme">
+            <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
+          </select>
+        </div>
+      </header>
+
+      <main id="main" tabindex="-1">
+        <section id="credentialGate" class="gate hidden" aria-labelledby="gateTitle">
+          <div class="gate-card">
+            <div class="gate-logo"><img src="/static/trac-symbol.svg" alt=""></div>
+            <p class="eyebrow">YOUR ENGINEERING WORKSPACE</p>
+            <h1 id="gateTitle">Connect TRAC to get started</h1>
+            <p class="muted">Use a project-scoped API credential. TRAC only shows data your credential is allowed to access.</p>
+            <form id="credentialForm" class="credential-form">
+              <label for="credentialInput">Project credential</label>
+              <input id="credentialInput" type="password" autocomplete="off" placeholder="Paste bearer credential" required>
+              <button class="button button-primary" type="submit">Connect securely</button>
+            </form>
+            <details class="dev-login">
+              <summary>Development login</summary>
+              <form id="devLoginForm" class="credential-form">
+                <label for="githubUsername">GitHub username</label>
+                <input id="githubUsername" autocomplete="username" required>
+                <label for="projectIdInput">Project ID</label>
+                <input id="projectIdInput" autocomplete="off" required>
+                <button class="button button-secondary" type="submit">Sign in to development workspace</button>
+              </form>
+              <p class="small muted">Available only when development authentication is explicitly enabled by the server.</p>
+            </details>
+            <p class="small muted">Credentials are kept in this browser session only. Never paste a pairing code here.</p>
+            <div id="gateError" class="message error hidden" role="alert"></div>
+          </div>
+        </section>
+
+        <section id="dashboard" class="hidden">
+          <div class="page-heading">
+            <div><p class="eyebrow" id="pageEyebrow">ENGINEERING INTELLIGENCE</p><h1 id="pageTitle">Overview</h1><p id="pageDescription" class="muted">A live view of verified project activity and task progress.</p></div>
+            <button class="button button-secondary" id="refreshButton">↻ Refresh</button>
+          </div>
+          <div id="pageError" class="message error hidden" role="alert"></div>
+          <div id="pageContent" aria-live="polite"></div>
+        </section>
+      </main>
+      <footer class="footer"><span>TRAC · Engineering Intelligence</span><a href="/legacy">Open previous dashboard</a></footer>
+    </div>
+  </div>
+
+  <dialog id="taskDialog" class="task-dialog">
+    <form method="dialog"><button class="dialog-close" aria-label="Close task details">×</button></form>
+    <div id="taskDialogContent"></div>
+  </dialog>
+</body>
+</html>
