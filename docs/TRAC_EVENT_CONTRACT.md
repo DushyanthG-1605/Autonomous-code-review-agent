@@ -70,8 +70,11 @@ the authenticated device, not from body claims. Reusing an event ID within a
 project is idempotent and produces no second event or stream record.
 For task lifecycle event types, `task_id` is required and must identify an
 existing task in the credential's project. Only that project's head or the
-assigned member can report against it. Accepted task-linked events create task
-history in the same transaction as the event and stream record.
+assigned member can report against it. Task lifecycle events create task
+history in the same transaction as the event and stream record. GitHub commit,
+pull-request, and CI evidence may also link to a task by a project-scoped
+external task key; these evidence events create history but do not change task
+status or progress.
 
 ### Supported event types and metadata
 
@@ -83,10 +86,10 @@ Metadata is an object; all unlisted properties are rejected.
 | `task.progress` | `progress` integer, 0–100; optional `note` (single-line, max 160 chars) |
 | `task.blocked` | optional `reason_code`: `dependency`, `permission`, `test_failure`, `build_failure`, `external`, `other`; optional `note` (single-line, max 160 chars) |
 | `task.completed` | required `outcome`: `done`, `partial`, `abandoned`; optional `note` (single-line, max 160 chars) |
-| `git.commit` | required hexadecimal `commit_sha` (7–64 chars); optional nonnegative `files_changed`, `insertions`, `deletions` |
-| `git.pull_request.opened`, `git.pull_request.merged` | positive `pull_request_number`, `base_branch`, `head_branch` (1–120 chars; letters, digits, `.`, `_`, `/`, `-`) |
+| `git.commit` | required hexadecimal `commit_sha` (7–64 chars); optional nonnegative `files_changed`, `insertions`, `deletions`, GitHub `repository`, `branch`, and matched `task_reference` |
+| `git.pull_request.opened`, `git.pull_request.updated`, `git.pull_request.merged` | positive `pull_request_number`, `base_branch`, `head_branch` (1–120 chars; letters, digits, `.`, `_`, `/`, `-`); optional GitHub `repository` and matched `task_reference` |
 | `test.completed` | required `result`: `passed`, `failed`, `cancelled`; optional nonnegative `duration_ms`, `tests_run`, `tests_failed` (`tests_failed` cannot exceed `tests_run`) |
-| `build.completed` | required `result`: `passed`, `failed`, `cancelled`; optional nonnegative `duration_ms` |
+| `build.completed` | required `result`: `passed`, `failed`, `cancelled`; optional nonnegative `duration_ms`, GitHub `repository`, `branch`, `workflow_name`, positive `workflow_id`, `run_id`, `check_name`, `check_run_id`, and matched `task_reference` |
 | `session.started`, `session.ended` | `{}` |
 
 `source` is one of `skill`, `cli`, `mcp`, `github`, or `ci`.
@@ -124,6 +127,7 @@ command text, credentials, or other sensitive content.
 | `GET /v1/me/tasks` | Assigned tasks in the current credential's project. |
 | `GET /v1/projects/{id}/activity` | Project-head-only activity view. |
 | `GET /v1/projects/{id}/overview` | Project-head-only task counts. |
+| `POST /v1/integrations/github/webhook` | HMAC-SHA256 verified GitHub delivery; repository mapping and delivery ID determine project and idempotency. |
 | `POST /v1/dev/login` | Optional local login, disabled unless explicitly enabled for development. |
 | `POST /v1/pairings` | Authenticated pairing issuance; creator must hold `events:ingest`, and the project/scopes are restricted to the creator's credential. |
 | `POST /v1/pairings/claim` | Rate-limited, one-time pairing claim; creates a device only after successful claim. |
@@ -222,12 +226,18 @@ project feed, and uses the SSE cursor to resume.
 Startup applies the additive
 `trac/migrations/001_project_scoped_events.sql`,
 `trac/migrations/002_projects_tasks_identity.sql`, and
-`trac/migrations/003_device_pairing.sql` migrations tracked in
+`trac/migrations/003_device_pairing.sql`, and
+`trac/migrations/004_github_ci_integration.sql` migrations tracked in
 `schema_migrations`. Migration 001 adds public actor IDs, projects,
 memberships, device project/scopes, event project references, and the durable
 stream sequence. Migration 002 adds optional user email/GitHub identity,
 project key/description/head, task and task-update tables, and development
 credential mode. Migration 003 adds hashed one-time device pairings and
-persistent pairing rate-limit buckets. Existing project slugs and owner
-memberships are used to backfill keys and heads; existing event and review
-records are preserved.
+persistent pairing rate-limit buckets. Migration 004 adds project-scoped task
+external keys, explicit GitHub repository mappings, and a unique webhook
+delivery ledger. Existing project slugs and owner memberships are used to
+backfill keys and heads; existing event and review records are preserved.
+
+GitHub signature verification, repository mapping, supported event actions,
+and integration limitations are specified in
+[`TRAC_GITHUB_INTEGRATION.md`](TRAC_GITHUB_INTEGRATION.md).

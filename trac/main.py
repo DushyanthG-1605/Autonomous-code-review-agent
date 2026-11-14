@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -13,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from json import JSONDecodeError
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
@@ -153,6 +154,7 @@ def _serialize_task(row):
         "priority": row["priority"],
         "progress_percent": row["progress_percent"],
         "progress_is_estimate": bool(row["progress_is_estimate"]),
+        "external_key": row["external_key"],
         "due_date": row["due_date"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -547,6 +549,7 @@ def _activity_summary(event_type: str, data: Dict[str, Any]) -> str:
         "task.completed": "Completed a task",
         "git.commit": "Committed changes",
         "git.pull_request.opened": "Opened a pull request",
+        "git.pull_request.updated": "Updated a pull request",
         "git.pull_request.merged": "Merged a pull request",
         "test.completed": f"Tests {data.get('result', 'completed')}",
         "build.completed": f"Build {data.get('result', 'completed')}",
@@ -851,6 +854,435 @@ def _ingest_legacy(conn, event: VersionedEvent, device, received_at: str):
             branch=event.branch,
         )
     return True
+
+
+TASK_REFERENCE_PATTERN = re.compile(
+    r"(?i)\b([A-Z][A-Z0-9_-]{0,63}-[1-9][0-9]{0,11})\b"
+)
+GITHUB_REPOSITORY_PATTERN = re.compile(
+    r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$"
+)
+GITHUB_REF_PATTERN = re.compile(r"^[A-Za-z0-9._/-]{1,120}$")
+
+
+def _github_task_reference(conn, project_id: str, *values):
+    references = {
+        match.group(1).upper()
+        for value in values
+        if isinstance(value, str)
+        for match in TASK_REFERENCE_PATTERN.finditer(value)
+    }
+    if len(references) != 1:
+        return None, None
+    reference = references.pop()
+    task = conn.execute(
+        """
+        SELECT id, external_key FROM tasks
+        WHERE project_id = ? AND external_key = ? COLLATE NOCASE
+        """,
+        (project_id, reference),
+    ).fetchone()
+    if task is None:
+        return None, None
+    return task["id"], task["external_key"]
+
+
+def _github_timestamp(value):
+    if not isinstance(value, str):
+        return now_iso()
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return now_iso()
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return now_iso()
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def _github_event_id(delivery_id: str, event_type: str, subject: str):
+    return str(
+        uuid5(
+            NAMESPACE_URL,
+            f"trac:github-delivery:{delivery_id}:{event_type}:{subject}",
+        )
+    )
+
+
+def _github_build_result(conclusion):
+    if conclusion == "success":
+        return "passed"
+    if conclusion in {
+        "failure",
+        "timed_out",
+        "action_required",
+        "startup_failure",
+    }:
+        return "failed"
+    if conclusion in {
+        "cancelled",
+        "canceled",
+        "neutral",
+        "skipped",
+        "stale",
+    }:
+        return "cancelled"
+    return None
+
+
+def _github_duration_ms(started_at, completed_at):
+    if not isinstance(started_at, str) or not isinstance(completed_at, str):
+        return None
+    try:
+        start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if (
+        start.tzinfo is None
+        or start.utcoffset() is None
+        or end.tzinfo is None
+        or end.utcoffset() is None
+    ):
+        return None
+    duration = (end - start).total_seconds()
+    if duration < 0:
+        return None
+    return int(duration * 1000)
+
+
+def _safe_ci_label(value):
+    if (
+        isinstance(value, str)
+        and len(value) <= 120
+        and re.fullmatch(r"[A-Za-z0-9_. /-]+", value)
+    ):
+        return value
+    return None
+
+
+def _normalize_github_payload(
+    conn,
+    *,
+    event_name: str,
+    delivery_id: str,
+    payload: Dict[str, Any],
+    project_id: str,
+):
+    repository = payload.get("repository")
+    repository_name = (
+        repository.get("full_name") if isinstance(repository, dict) else None
+    )
+    if not isinstance(repository_name, str) or not GITHUB_REPOSITORY_PATTERN.fullmatch(
+        repository_name
+    ):
+        raise HTTPException(status_code=422, detail="Invalid repository in payload")
+
+    events = []
+
+    def add_event(
+        event_type, source, occurred_at, task_id, task_reference, metadata, subject
+    ):
+        raw_event = {
+            "event_id": _github_event_id(delivery_id, event_type, subject),
+            "schema_version": 2,
+            "event_type": event_type,
+            "task_id": task_id,
+            "source": source,
+            "occurred_at": _github_timestamp(occurred_at),
+            "metadata": {
+                **metadata,
+                "repository": repository_name,
+                **({"task_reference": task_reference} if task_reference else {}),
+            },
+        }
+        try:
+            event = CanonicalEvent.model_validate(raw_event)
+            _reject_sensitive_values(event.metadata)
+        except (ValidationError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422, detail="Invalid normalized GitHub event"
+            ) from exc
+        events.append(event)
+
+    if event_name == "push":
+        ref = payload.get("ref")
+        branch = (
+            ref[len("refs/heads/") :]
+            if isinstance(ref, str) and ref.startswith("refs/heads/")
+            else None
+        )
+        head = payload.get("head_commit")
+        commits = payload.get("commits")
+        commit = head if isinstance(head, dict) else None
+        if commit is None and isinstance(commits, list) and commits:
+            commit = commits[-1] if isinstance(commits[-1], dict) else None
+        if (
+            commit is not None
+            and isinstance(commit.get("id"), str)
+            and re.fullmatch(r"[0-9a-fA-F]{7,64}", commit["id"])
+            and isinstance(branch, str)
+            and GITHUB_REF_PATTERN.fullmatch(branch)
+        ):
+            task_id, task_reference = _github_task_reference(
+                conn, project_id, branch
+            )
+            add_event(
+                "git.commit",
+                "github",
+                commit.get("timestamp") or payload.get("pushed_at"),
+                task_id,
+                task_reference,
+                {"commit_sha": commit["id"], "branch": branch},
+                commit["id"].lower(),
+            )
+    elif event_name == "pull_request":
+        action = payload.get("action")
+        pull_request = payload.get("pull_request")
+        if isinstance(pull_request, dict):
+            number = pull_request.get("number")
+            base = pull_request.get("base")
+            head = pull_request.get("head")
+            base_ref = base.get("ref") if isinstance(base, dict) else None
+            head_ref = head.get("ref") if isinstance(head, dict) else None
+            if (
+                isinstance(number, int)
+                and number > 0
+                and isinstance(base_ref, str)
+                and GITHUB_REF_PATTERN.fullmatch(base_ref)
+                and isinstance(head_ref, str)
+                and GITHUB_REF_PATTERN.fullmatch(head_ref)
+            ):
+                if action == "opened":
+                    event_type = "git.pull_request.opened"
+                elif action == "synchronize":
+                    event_type = "git.pull_request.updated"
+                elif action == "closed" and pull_request.get("merged") is True:
+                    event_type = "git.pull_request.merged"
+                else:
+                    event_type = None
+                if event_type:
+                    task_id, task_reference = _github_task_reference(
+                        conn,
+                        project_id,
+                        pull_request.get("title"),
+                        head_ref,
+                    )
+                    add_event(
+                        event_type,
+                        "github",
+                        pull_request.get("updated_at")
+                        or pull_request.get("created_at"),
+                        task_id,
+                        task_reference,
+                        {
+                            "pull_request_number": number,
+                            "base_branch": base_ref,
+                            "head_branch": head_ref,
+                        },
+                        f"pr:{number}:{action}",
+                    )
+    elif event_name == "workflow_run":
+        workflow_run = payload.get("workflow_run")
+        if isinstance(workflow_run, dict) and payload.get("action") == "completed":
+            result = _github_build_result(workflow_run.get("conclusion"))
+            branch = workflow_run.get("head_branch")
+            if result and (
+                branch is None
+                or (
+                    isinstance(branch, str)
+                    and GITHUB_REF_PATTERN.fullmatch(branch)
+                )
+            ):
+                task_id, task_reference = _github_task_reference(
+                    conn, project_id, branch
+                )
+                add_event(
+                    "build.completed",
+                    "ci",
+                    workflow_run.get("updated_at")
+                    or workflow_run.get("completed_at"),
+                    task_id,
+                    task_reference,
+                    {
+                        "result": result,
+                        "duration_ms": _github_duration_ms(
+                            workflow_run.get("run_started_at"),
+                            workflow_run.get("updated_at")
+                            or workflow_run.get("completed_at"),
+                        ),
+                        "workflow_name": _safe_ci_label(workflow_run.get("name")),
+                        "workflow_id": workflow_run.get("workflow_id"),
+                        "run_id": workflow_run.get("id"),
+                        "branch": branch,
+                    },
+                    f"workflow:{workflow_run.get('id')}",
+                )
+    elif event_name == "check_run":
+        check_run = payload.get("check_run")
+        if isinstance(check_run, dict) and payload.get("action") == "completed":
+            result = _github_build_result(check_run.get("conclusion"))
+            check_suite = check_run.get("check_suite")
+            branch = (
+                check_suite.get("head_branch")
+                if isinstance(check_suite, dict)
+                else None
+            )
+            if branch is None:
+                branch = check_run.get("head_branch")
+            if result and (
+                branch is None
+                or (
+                    isinstance(branch, str)
+                    and GITHUB_REF_PATTERN.fullmatch(branch)
+                )
+            ):
+                task_id, task_reference = _github_task_reference(
+                    conn, project_id, branch
+                )
+                add_event(
+                    "build.completed",
+                    "ci",
+                    check_run.get("completed_at"),
+                    task_id,
+                    task_reference,
+                    {
+                        "result": result,
+                        "duration_ms": _github_duration_ms(
+                            check_run.get("started_at"),
+                            check_run.get("completed_at"),
+                        ),
+                        "check_name": _safe_ci_label(check_run.get("name")),
+                        "check_run_id": check_run.get("id"),
+                        "branch": branch,
+                    },
+                    f"check:{check_run.get('id')}",
+                )
+    return events
+
+
+@app.post("/v1/integrations/github/webhook", status_code=202)
+async def receive_github_webhook(request: Request):
+    secret = os.environ.get("TRAC_GITHUB_WEBHOOK_SECRET", "")
+    if not secret:
+        raise HTTPException(
+            status_code=503, detail="GitHub webhook integration is not configured"
+        )
+    body = await _read_limited_body(request)
+    signature = request.headers.get("x-hub-signature-256", "")
+    expected_signature = "sha256=" + hmac.new(
+        secret.encode("utf-8"), body, hashlib.sha256
+    ).hexdigest()
+    if not re.fullmatch(r"sha256=[0-9a-f]{64}", signature) or not hmac.compare_digest(
+        signature, expected_signature
+    ):
+        raise HTTPException(status_code=401, detail="Invalid GitHub webhook signature")
+
+    delivery_id = request.headers.get("x-github-delivery", "")
+    event_name = request.headers.get("x-github-event", "")
+    try:
+        delivery_id = str(UUID(delivery_id))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400, detail="Invalid GitHub delivery ID"
+        ) from exc
+    if not event_name or len(event_name) > 80:
+        raise HTTPException(status_code=400, detail="Invalid GitHub event header")
+    try:
+        payload = json.loads(body)
+    except (JSONDecodeError, UnicodeDecodeError) as exc:
+        raise HTTPException(
+            status_code=422, detail="Request body must be valid JSON"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="Webhook body must be an object")
+
+    supported_events = {"push", "pull_request", "workflow_run", "check_run"}
+    if event_name not in supported_events:
+        return {"accepted": 0, "ignored": True}
+
+    repository = payload.get("repository")
+    repository_name = (
+        repository.get("full_name") if isinstance(repository, dict) else None
+    )
+    if not isinstance(repository_name, str) or not GITHUB_REPOSITORY_PATTERN.fullmatch(
+        repository_name
+    ):
+        raise HTTPException(status_code=422, detail="Invalid repository in payload")
+
+    conn = get_connection()
+    received_at = now_iso()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        duplicate = conn.execute(
+            "SELECT 1 FROM github_webhook_deliveries WHERE delivery_id = ?",
+            (delivery_id,),
+        ).fetchone()
+        if duplicate is not None:
+            conn.commit()
+            return {"accepted": 0, "duplicate": True}
+
+        mapping = conn.execute(
+            """
+            SELECT github_repository_mappings.project_id,
+                   github_repository_mappings.actor_user_id,
+                   users.github_login, users.display_name,
+                   projects.project_head_id
+            FROM github_repository_mappings
+            JOIN users ON users.id = github_repository_mappings.actor_user_id
+            JOIN projects ON projects.id = github_repository_mappings.project_id
+            WHERE github_repository_mappings.repository = ?
+            """,
+            (repository_name,),
+        ).fetchone()
+        if mapping is None:
+            raise HTTPException(status_code=404, detail="Repository is not mapped")
+
+        events = _normalize_github_payload(
+            conn,
+            event_name=event_name,
+            delivery_id=delivery_id,
+            payload=payload,
+            project_id=mapping["project_id"],
+        )
+        conn.execute(
+            """
+            INSERT INTO github_webhook_deliveries
+                (delivery_id, event_name, repository, project_id, received_at,
+                 normalized_count)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                delivery_id,
+                event_name,
+                repository_name,
+                mapping["project_id"],
+                received_at,
+                len(events),
+            ),
+        )
+        integration_actor = {
+            "user_id": mapping["actor_user_id"],
+            "project_id": mapping["project_id"],
+            "actor_id": None,
+            "github_login": mapping["github_login"],
+            "display_name": mapping["display_name"],
+            "project_head_id": mapping["actor_user_id"],
+            "membership_role": "owner",
+        }
+        accepted = 0
+        for event in events:
+            if _ingest_canonical(conn, event, integration_actor, received_at):
+                accepted += 1
+        conn.commit()
+        return {"accepted": accepted, "duplicate": False}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 @app.post("/v1/events", status_code=202)
@@ -1711,21 +2143,31 @@ def create_project_task(
                     detail="Assignee must be an owner or member of this project",
                 )
             assignee_id = assignee["id"]
+        if payload.external_key and conn.execute(
+            """
+            SELECT 1 FROM tasks
+            WHERE project_id = ? AND external_key = ? COLLATE NOCASE
+            """,
+            (project_id, payload.external_key),
+        ).fetchone():
+            raise HTTPException(status_code=409, detail="Task key already exists")
         conn.execute(
             """
             INSERT INTO tasks
                 (
-                    id, project_id, title, description, assignee_id, status, priority,
+                    id, project_id, title, description, external_key, assignee_id,
+                    status, priority,
                     progress_percent, progress_is_estimate, due_date, created_at,
                     updated_at
                 )
-            VALUES (?, ?, ?, ?, ?, 'todo', ?, 0, 0, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 'todo', ?, 0, 0, ?, ?, ?)
             """,
             (
                 task_id,
                 project_id,
                 payload.title,
                 payload.description,
+                payload.external_key,
                 assignee_id,
                 payload.priority,
                 payload.due_date.isoformat() if payload.due_date else None,
@@ -1794,7 +2236,14 @@ def patch_task(
                 detail="Members may only report status, progress, and notes",
             )
         updates = {}
-        for field in ("title", "description", "status", "priority", "due_date"):
+        for field in (
+            "title",
+            "description",
+            "external_key",
+            "status",
+            "priority",
+            "due_date",
+        ):
             if field in fields:
                 value = getattr(payload, field)
                 updates[field] = (
@@ -1822,6 +2271,17 @@ def patch_task(
                         detail="Assignee must be an owner or member of this project",
                     )
                 updates["assignee_id"] = assignee["id"]
+        if "external_key" in fields and payload.external_key is not None:
+            duplicate_key = conn.execute(
+                """
+                SELECT 1 FROM tasks
+                WHERE project_id = ? AND external_key = ? COLLATE NOCASE
+                  AND id != ?
+                """,
+                (row["project_id"], payload.external_key, task_id),
+            ).fetchone()
+            if duplicate_key is not None:
+                raise HTTPException(status_code=409, detail="Task key already exists")
         if "progress_percent" in fields:
             updates["progress_percent"] = payload.progress_percent
             updates["progress_is_estimate"] = 0

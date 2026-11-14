@@ -61,6 +61,7 @@ login endpoint and previously issued development credentials, even if
 | `id` | UUID task identifier |
 | `project_id` | Owning project |
 | `title`, `description` | Task text |
+| `external_key` | Optional project-scoped key for explicit GitHub task association, e.g. `TRAC-101` |
 | `assignee_id` | Optional internal user foreign key |
 | `status` | `todo`, `in_progress`, `blocked`, `in_review`, or `done` |
 | `priority` | `low`, `medium`, `high`, or `urgent` |
@@ -134,6 +135,7 @@ Content-Type: application/json
 {
   "title": "Add payment retry handling",
   "description": "Retry transient provider failures.",
+  "external_key": "TRAC-101",
   "assignee_id": "018f5c2a-7b6d-7a22-b33a-cb1d5e12f043",
   "priority": "high",
   "due_date": "2025-04-15"
@@ -174,7 +176,9 @@ Version-2 task event types (`task.started`, `task.progress`, `task.blocked`,
 Only the project head or the assigned member can report against that task.
 Accepted events update task state and create exactly one `task_updates` row in
 the same transaction as the event and stream record. Replayed event IDs create
-no additional history.
+no additional history. GitHub commit, pull-request, or CI evidence may also
+create a task history row when its explicit reference matches a task's
+`external_key`; these evidence events do not change task status or progress.
 
 ```json
 {

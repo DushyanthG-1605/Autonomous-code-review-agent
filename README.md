@@ -38,6 +38,23 @@ $env:TRAC_API_TOKEN = "<project-scoped-device-token>"
 $env:TRAC_EVENTS_URL = "http://127.0.0.1:8000/api/events"
 ```
 
+## GitHub and CI activity
+
+TRAC can receive signed GitHub webhooks at
+`POST /v1/integrations/github/webhook`. Configure
+`TRAC_GITHUB_WEBHOOK_SECRET` in the server's secret manager, then explicitly map
+each repository to a TRAC project:
+
+```text
+python -m trac.manage map-github-repo <project-slug> <owner/repository>
+python -m trac.manage unmap-github-repo <owner/repository>
+```
+
+GitHub push, pull request, workflow-run, and check-run evidence uses the same
+canonical activity store and project-scoped activity API as agent events. See
+[`docs/TRAC_GITHUB_INTEGRATION.md`](docs/TRAC_GITHUB_INTEGRATION.md) for
+signature setup, supported actions, task-key matching, and limitations.
+
 Revoke a device with:
 
 ```text

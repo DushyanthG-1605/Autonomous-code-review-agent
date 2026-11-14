@@ -1,6 +1,7 @@
 import argparse
 import hashlib
 import json
+import re
 import secrets
 import sqlite3
 import sys
@@ -190,6 +191,64 @@ def revoke_device(device_id: int) -> bool:
         conn.close()
 
 
+def map_github_repository(slug: str, repository: str) -> None:
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}", repository):
+        raise ValueError("Repository must use the owner/repository format")
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        project = conn.execute(
+            "SELECT id FROM projects WHERE slug = ?", (slug,)
+        ).fetchone()
+        if project is None:
+            raise ValueError(f"Unknown project: {slug}")
+        integration_login = f"trac-github-{project['id'].replace('-', '')}"
+        actor = conn.execute(
+            "SELECT id FROM users WHERE github_login = ?", (integration_login,)
+        ).fetchone()
+        if actor is None:
+            actor_id = conn.execute(
+                """
+                INSERT INTO users
+                    (github_login, display_name, created_at, public_id, role)
+                VALUES (?, 'GitHub Integration', ?, ?, 'integration')
+                """,
+                (integration_login, now_iso(), str(uuid.uuid4())),
+            ).lastrowid
+        else:
+            actor_id = actor["id"]
+        conn.execute(
+            """
+            INSERT INTO github_repository_mappings
+                (repository, project_id, actor_user_id, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (repository, project["id"], actor_id, now_iso()),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError as exc:
+        conn.rollback()
+        raise ValueError("Repository is already mapped") from exc
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def unmap_github_repository(repository: str) -> bool:
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "DELETE FROM github_repository_mappings WHERE repository = ?",
+            (repository,),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="python -m trac.manage")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -207,10 +266,20 @@ def main(argv=None) -> int:
     member_parser.add_argument("--role", choices=("member", "viewer"), default="member")
     revoke_parser = subparsers.add_parser("revoke-device")
     revoke_parser.add_argument("id", type=int)
+    map_repo_parser = subparsers.add_parser("map-github-repo")
+    map_repo_parser.add_argument("slug")
+    map_repo_parser.add_argument("repository")
+    unmap_repo_parser = subparsers.add_parser("unmap-github-repo")
+    unmap_repo_parser.add_argument("repository")
     args = parser.parse_args(argv)
 
     init_db()
-    if args.command in {"create-user", "create-project", "add-project-member"}:
+    if args.command in {
+        "create-user",
+        "create-project",
+        "add-project-member",
+        "map-github-repo",
+    }:
         try:
             if args.command == "create-user":
                 token = create_user(
@@ -218,12 +287,24 @@ def main(argv=None) -> int:
                 )
             elif args.command == "create-project":
                 token = create_project(args.slug, args.name, args.owner_login)
-            else:
+            elif args.command == "add-project-member":
                 token = add_project_member(args.slug, args.github_login, args.role)
+            else:
+                map_github_repository(args.slug, args.repository)
         except (sqlite3.IntegrityError, ValueError) as exc:
-            print(f"Could not create user: {exc}", file=sys.stderr)
+            print(f"Could not update TRAC configuration: {exc}", file=sys.stderr)
             return 1
-        print(token)
+        if args.command == "map-github-repo":
+            print(f"Mapped {args.repository} to project {args.slug}")
+        else:
+            print(token)
+        return 0
+
+    if args.command == "unmap-github-repo":
+        if not unmap_github_repository(args.repository):
+            print(f"Repository mapping not found: {args.repository}", file=sys.stderr)
+            return 1
+        print(f"Removed mapping for {args.repository}")
         return 0
 
     if not revoke_device(args.id):
