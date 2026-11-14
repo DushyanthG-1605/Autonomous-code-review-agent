@@ -1,26 +1,21 @@
 # Universal TRAC Skill Integration Contract
 
-This is the planned shared contract for future TRAC Skill integrations. It is documentation only; it does not activate collection or authorization behavior.
+The shared skill is [`skill/trac/SKILL.md`](../skill/trac/SKILL.md), and the
+host compatibility and installation workflow is documented in
+[`TRAC_UNIVERSAL_INTEGRATION.md`](TRAC_UNIVERSAL_INTEGRATION.md).
 
-## Event envelope
+Every host uses the same collector, consent policy, version-2 event contract,
+project-bound credentials, task authorization, pause/revoke behavior, and
+privacy rules. Host-specific adapters may install the skill or expose optional
+hooks; they do not define a separate backend or event schema.
 
-Every event uses the same envelope regardless of host IDE or agent:
+The event API, metadata allowlists, pairing APIs, and task authorization are
+specified in [`TRAC_EVENT_CONTRACT.md`](TRAC_EVENT_CONTRACT.md). Version-2
+task events contain a real task UUID and only approved structured metadata.
+Credentials determine the project and actor; caller-supplied identity claims
+are ignored. The API rejects invalid metadata and recognizable secret values.
 
-```json
-{
-  "event_id": "evt_01...",
-  "project_id": "project_01...",
-  "actor": { "user_id": "user_01...", "device_id": "device_01..." },
-  "event_type": "task.progress",
-  "timestamp": "2026-11-13T12:00:00Z",
-  "metadata": {}
-}
-```
-
-`metadata` is allowlisted per event type. Source code, file contents, prompts, credentials, and secrets are never part of the contract. Authorization, inspection, pause, and revocation must be enforced by the collector and backend before this contract is considered implemented.
-
-## Event types
-
-The shared lifecycle includes `task.started`, `task.progress`, `task.blocked`, `task.completed`, `session.started`, `session.ended`, `git.commit`, and `test.completed`.
-
-IDE-specific adapters may only handle installation, configuration, or optional event hooks. They must emit the same envelope, permissions, lifecycle, and privacy semantics into a universal collector.
+The collector does not track automatically. The agent must ask for explicit
+developer permission before using TRAC for a workspace or task. It reports
+meaningful task milestones only; unavailable TRAC must never block the actual
+development work.

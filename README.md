@@ -44,28 +44,29 @@ Revoke a device with:
 python -m trac.manage revoke-device <id>
 ```
 
-## Install the TRAC activity tracker
+## Install the TRAC collector
 
-From the repository root, install the collector and configure a repository:
+From the repository root, install the shared collector and place the universal
+skill in the current agent's documented project skill directory:
 
 ```text
 pip install -e collector
-trac login --url <server> --token <device-token>
-trac init
-trac init --claude  # Optional: merge Claude Code hooks into .claude/settings.json
+trac init --target <claude|cursor|codex|copilot>
+trac login --url <server>
 trac status
 ```
 
-The tracker reports task summaries and outcomes plus session boundaries. Git
-hooks report commit statistics and branch/push metadata. Optional Claude hooks
-report edited-file paths, language and line counts; command kind and exit code;
-and a prompt-submission count. TRAC never collects source or file contents,
-diffs, prompt text, shell-command text, environment values, secrets, or commit
-messages.
+Ask the developer for explicit consent before enabling tracking or running
+task-reporting commands. A project member/head with event-ingest permission
+creates a short-lived pairing code from `POST /v1/pairings`; `trac login`
+claims it without echoing the code. Long-lived device credentials are stored
+in the OS credential store. See
+[`docs/TRAC_UNIVERSAL_INTEGRATION.md`](docs/TRAC_UNIVERSAL_INTEGRATION.md)
+for pairing, compatibility, CLI, queue, and privacy details.
 
-Pause collection immediately with `trac pause`; inspect queued and recently
-sent metadata with `trac data`; resume with `trac resume`. Offline events stay
-queued for `trac flush` when the server is reachable. The progress-reporting
-skill is in [`skill/trac-activity/SKILL.md`](skill/trac-activity/SKILL.md).
-Claude hook settings can also be viewed in
-[`collector/examples/.claude/settings.json`](collector/examples/.claude/settings.json).
+Task reporting uses assigned task UUIDs and the version-2 event contract. The
+collector never captures source code, diffs, prompts, command text, environment
+values, or file contents. Pause with `trac pause`, inspect redacted event data
+with `trac data`, resume with `trac resume`, and revoke the device plus clear
+queued events with `trac disconnect`. Optional Git hooks require the explicit
+`trac init --git-hooks` flag; they are not required for task reporting.

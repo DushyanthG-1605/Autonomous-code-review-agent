@@ -1,6 +1,7 @@
 import argparse
 import contextlib
 import datetime as dt
+import getpass
 import json
 import math
 import os
@@ -10,6 +11,7 @@ import stat
 import subprocess
 import sys
 import time
+import uuid
 from collections import deque
 from pathlib import Path
 from urllib.parse import urlparse
@@ -51,6 +53,23 @@ FLUSH_BATCH_SIZE = 100
 MAX_REQUEST_BYTES = 256 * 1024
 INLINE_FLUSH_TIMEOUT = 2
 MAX_BACKOFF_SECONDS = 300
+MAX_QUEUE_EVENTS = 1000
+MAX_QUEUE_BYTES = 2 * 1024 * 1024
+KEYRING_SERVICE = "trac-activity-collector"
+TASK_EVENT_FIELDS = {
+    "task.started": set(),
+    "task.progress": {"progress", "note"},
+    "task.blocked": {"reason_code", "note"},
+    "task.completed": {"outcome", "note"},
+}
+TASK_BLOCK_REASONS = {
+    "dependency",
+    "permission",
+    "test_failure",
+    "build_failure",
+    "external",
+    "other",
+}
 HOOK_NAMES = ("post-commit", "pre-push", "post-checkout")
 CLAUDE_HOOK_COMMAND = "trac hook claude"
 CLAUDE_HOOKS = {
@@ -178,6 +197,31 @@ def _queue_size():
         return len(_read_jsonl(STATE_DIR / "queue.jsonl"))
 
 
+def _append_bounded_queue(events):
+    path = STATE_DIR / "queue.jsonl"
+    queued = _read_jsonl(path)
+    queued.extend(events)
+    dropped = 0
+    while queued and (
+        len(queued) > MAX_QUEUE_EVENTS
+        or sum(
+            len(json.dumps(item, separators=(",", ":"), ensure_ascii=True).encode("utf-8"))
+            + 1
+            for item in queued
+        )
+        > MAX_QUEUE_BYTES
+    ):
+        queued.pop(0)
+        dropped += 1
+    _write_jsonl(path, queued)
+    if dropped:
+        state = _read_json(STATE_DIR / "state.json", {})
+        if not isinstance(state, dict):
+            state = {}
+        state["dropped_queue_events"] = state.get("dropped_queue_events", 0) + dropped
+        _write_json(STATE_DIR / "state.json", state)
+
+
 def _append_jsonl(path, records):
     if not records:
         return
@@ -246,7 +290,95 @@ def _repo_path(value, repo_root):
 
 def _read_config():
     value = _read_json(STATE_DIR / "config.json", {})
-    return value if isinstance(value, dict) else {}
+    if not isinstance(value, dict):
+        value = {}
+    legacy_token = value.pop("token", None)
+    if isinstance(legacy_token, str) and legacy_token:
+        _store_credential(legacy_token)
+        _write_json(STATE_DIR / "config.json", value)
+    token = _load_credential()
+    if token:
+        value["token"] = token
+    return value
+
+
+def _credential_account():
+    return str(STATE_DIR.expanduser().resolve())
+
+
+def _load_credential():
+    try:
+        import keyring
+    except ImportError:
+        if os.name == "nt":
+            raise RuntimeError(
+                "Install the TRAC collector with its keyring dependency before login"
+            )
+        value = _read_json(STATE_DIR / "credential.json", {})
+        if isinstance(value, dict):
+            token = value.get("token")
+            if isinstance(token, str):
+                return token
+        return None
+    try:
+        token = keyring.get_password(KEYRING_SERVICE, _credential_account())
+        if token:
+            return token
+    except keyring.errors.KeyringError as exc:
+        raise RuntimeError("The operating-system credential store is unavailable") from exc
+    value = _read_json(STATE_DIR / "credential.json", {})
+    if isinstance(value, dict) and isinstance(value.get("token"), str):
+        token = value["token"]
+        _store_credential(token)
+        (STATE_DIR / "credential.json").unlink()
+        return token
+    return None
+
+
+def _store_credential(token):
+    try:
+        import keyring
+    except ImportError:
+        if os.name == "nt":
+            raise RuntimeError(
+                "Install the TRAC collector with its keyring dependency before login"
+            )
+        _write_json(STATE_DIR / "credential.json", {"token": token})
+        return "restricted-file"
+    try:
+        keyring.set_password(KEYRING_SERVICE, _credential_account(), token)
+        fallback_path = STATE_DIR / "credential.json"
+        if fallback_path.exists():
+            fallback_path.unlink()
+        return "keyring"
+    except keyring.errors.KeyringError as exc:
+        raise RuntimeError("The operating-system credential store is unavailable") from exc
+
+
+def _delete_credential():
+    try:
+        import keyring
+    except ImportError:
+        keyring = None
+    if keyring is not None:
+        try:
+            keyring.delete_password(KEYRING_SERVICE, _credential_account())
+        except keyring.errors.PasswordDeleteError:
+            pass
+        except keyring.errors.KeyringError as exc:
+            raise RuntimeError(
+                "The operating-system credential store is unavailable"
+            ) from exc
+    try:
+        (STATE_DIR / "credential.json").unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _write_config(config):
+    safe_config = dict(config)
+    safe_config.pop("token", None)
+    _write_json(STATE_DIR / "config.json", safe_config)
 
 
 def _load_session():
@@ -431,13 +563,7 @@ def emit_event(
             preserve_session_id=preserve_session_id,
         )
         events = [redact_value(event) for event in events]
-        path = STATE_DIR / "queue.jsonl"
-        with path.open("a", encoding="utf-8") as handle:
-            for event in events:
-                handle.write(json.dumps(event, separators=(",", ":"), ensure_ascii=True))
-                handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+        _append_bounded_queue(events)
         _write_json(STATE_DIR / "session.json", session_state)
 
     state = _read_json(STATE_DIR / "state.json", {})
@@ -568,6 +694,9 @@ def flush_queue(timeout=5, force=False):
     token = config.get("token")
     if not isinstance(url, str) or not isinstance(token, str) or not token:
         return {"sent": 0, "queued": _queue_size(), "logged_in": False}
+    scopes = config.get("scopes")
+    if not isinstance(scopes, list) or "events:ingest" not in scopes:
+        return {"sent": 0, "queued": _queue_size(), "scope_error": True}
 
     state = _read_state()
     if not force and state.get("backoff_until", 0) > time.time():
@@ -575,6 +704,19 @@ def flush_queue(timeout=5, force=False):
 
     with _queue_lock():
         queued = _read_jsonl(STATE_DIR / "queue.jsonl")
+    rejected_count = 0
+    if config.get("project_id"):
+        invalid = [
+            event
+            for event in queued
+            if event.get("schema_version") == 2
+            and not _valid_queued_canonical_event(event, config["project_id"])
+        ]
+        if invalid:
+            _drop_batch(invalid, [], "invalid_local_event")
+            rejected_count += len(invalid)
+            invalid_ids = {event.get("event_id") for event in invalid}
+            queued = [event for event in queued if event.get("event_id") not in invalid_ids]
     oversize = [
         event
         for event in queued
@@ -610,6 +752,10 @@ def flush_queue(timeout=5, force=False):
             state["auth_error"] = True
             _mark_attempt(state)
             return {"sent": sent_count, "queued": _queue_size(), "auth_error": True}
+        if response.status_code == 403:
+            state["scope_error"] = True
+            _mark_attempt(state)
+            return {"sent": sent_count, "queued": _queue_size(), "scope_error": True}
         if response.status_code == 429 or response.status_code >= 500:
             retry_after = None
             try:
@@ -624,11 +770,13 @@ def flush_queue(timeout=5, force=False):
             except ValueError:
                 details = response.text[:300]
             _drop_batch(batch, [], "http_422", details)
+            rejected_count += len(batch)
             _mark_attempt(state)
             continue
         if response.status_code == 413:
             if len(batch) == 1:
                 _drop_batch(batch, [], "event_too_large", response.text[:300])
+                rejected_count += 1
                 _mark_attempt(state)
                 continue
             midpoint = len(batch) // 2
@@ -642,6 +790,7 @@ def flush_queue(timeout=5, force=False):
                 f"http_{response.status_code}",
                 response.text[:300],
             )
+            rejected_count += len(batch)
             _mark_attempt(state)
             continue
 
@@ -657,14 +806,20 @@ def flush_queue(timeout=5, force=False):
             return {"sent": sent_count, "queued": _queue_size(), "invalid_response": True}
 
         _drop_batch(batch, rejected)
+        rejected_count += len(rejected)
         sent_count += accepted + duplicates
         state["last_success_at"] = _utc_now()
         state.pop("auth_error", None)
+        state.pop("scope_error", None)
         state["backoff_seconds"] = 0
         state["backoff_until"] = 0
         _mark_attempt(state)
 
-    return {"sent": sent_count, "queued": _queue_size()}
+    return {
+        "sent": sent_count,
+        "queued": _queue_size(),
+        "rejected": rejected_count,
+    }
 
 
 def _hook_block(name):
@@ -1092,6 +1247,367 @@ def _prune_sent_records():
         return kept
 
 
+def _validate_server_url(value):
+    parsed = urlparse(value)
+    if (
+        parsed.scheme not in {"https", "http"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("Use a valid TRAC server URL without embedded credentials")
+    if parsed.scheme != "https" and parsed.hostname not in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }:
+        raise ValueError("HTTPS is required except for loopback development servers")
+    return value.rstrip("/")
+
+
+def _login_to_server(url, pairing_code=None, device_label="TRAC CLI"):
+    url = _validate_server_url(url)
+    if pairing_code:
+        response = requests.post(
+            url + "/v1/pairings/claim",
+            json={"code": pairing_code.strip(), "device_label": device_label},
+            timeout=10,
+        )
+        if response.status_code != 200:
+            raise ValueError("Pairing failed; check the code and server")
+        credential = response.json()
+        token = credential.get("access_token")
+        identity = {
+            "project_id": credential.get("project_id"),
+            "scopes": credential.get("scopes"),
+            "device_id": credential.get("device_id"),
+        }
+    else:
+        pairing_code = getpass.getpass("One-time TRAC pairing code: ").strip()
+        if not pairing_code:
+            raise ValueError("A pairing code is required")
+        return _login_to_server(
+            url,
+            pairing_code=pairing_code,
+            device_label=device_label,
+        )
+
+    if (
+        not isinstance(token, str)
+        or not token
+        or not isinstance(identity.get("project_id"), str)
+        or not isinstance(identity.get("scopes"), list)
+    ):
+        raise ValueError("TRAC returned an invalid device credential")
+    _save_login(url, token, identity)
+    return identity
+
+
+def _require_scope(config, scope):
+    scopes = config.get("scopes")
+    if not isinstance(scopes, list) or scope not in scopes:
+        raise PermissionError(f"Device credential lacks {scope} permission")
+
+
+def _api_get(path, *, timeout=10):
+    config = _read_config()
+    token = config.get("token")
+    url = config.get("url")
+    if not isinstance(token, str) or not token or not isinstance(url, str):
+        raise PermissionError("Run 'trac login' first")
+    _require_scope(config, "events:read")
+    response = requests.get(
+        url.rstrip("/") + path,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=timeout,
+    )
+    if response.status_code == 401:
+        state = _read_state()
+        state["auth_error"] = True
+        _write_state(state)
+        raise PermissionError("TRAC credential is revoked or no longer valid")
+    if response.status_code == 403:
+        raise PermissionError("Device credential lacks permission")
+    if response.status_code != 200:
+        raise RuntimeError(f"TRAC request failed with HTTP {response.status_code}")
+    return response.json()
+
+
+def _is_uuid(value):
+    try:
+        uuid.UUID(value)
+        return True
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
+def _resolve_task(task_reference, tasks):
+    try:
+        normalized_uuid = str(uuid.UUID(task_reference))
+    except (ValueError, AttributeError):
+        normalized_uuid = None
+    matches = [
+        task
+        for task in tasks
+        if (normalized_uuid and task.get("id") == normalized_uuid)
+        or task.get("title", "").casefold() == task_reference.casefold()
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            "Task must match one assigned task ID or an unambiguous exact title"
+        )
+    return matches[0]
+
+
+def _build_canonical_task_event(event_type, task_id, metadata, project_id):
+    if event_type not in TASK_EVENT_FIELDS:
+        raise ValueError("Unsupported task event type")
+    try:
+        task_id = str(uuid.UUID(task_id))
+        project_id = str(uuid.UUID(project_id))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValueError("Task and project IDs must be UUIDs") from exc
+    if not isinstance(metadata, dict) or set(metadata) - TASK_EVENT_FIELDS[event_type]:
+        raise ValueError("Task event metadata contains unsupported fields")
+    clean_metadata = redact_value(metadata)
+    if event_type == "task.progress":
+        progress = clean_metadata.get("progress")
+        if isinstance(progress, bool) or not isinstance(progress, int) or not 0 <= progress <= 100:
+            raise ValueError("Progress must be an integer from 0 to 100")
+    reason = clean_metadata.get("reason_code", "other")
+    if event_type == "task.blocked" and reason not in TASK_BLOCK_REASONS:
+        raise ValueError("Unsupported task blocker reason code")
+    if event_type == "task.blocked":
+        clean_metadata["reason_code"] = reason
+    if event_type == "task.completed":
+        if clean_metadata.get("outcome") not in {"done", "partial", "abandoned"}:
+            raise ValueError("Unsupported task completion outcome")
+    if "note" in clean_metadata:
+        note = clean_metadata["note"]
+        if not isinstance(note, str) or len(note) > 160 or "\n" in note or "\r" in note:
+            raise ValueError("Task notes must be a single line of at most 160 characters")
+        clean_metadata["note"] = note
+    return {
+        "event_id": str(uuid.uuid4()),
+        "schema_version": 2,
+        "event_type": event_type,
+        "project_id": project_id,
+        "task_id": task_id,
+        "source": "cli",
+        "occurred_at": _utc_now(),
+        "metadata": clean_metadata,
+    }
+
+
+def _valid_queued_canonical_event(event, project_id):
+    allowed_fields = {
+        "event_id",
+        "schema_version",
+        "event_type",
+        "project_id",
+        "task_id",
+        "source",
+        "occurred_at",
+        "metadata",
+    }
+    if not isinstance(event, dict) or set(event) != allowed_fields:
+        return False
+    if event.get("schema_version") != 2 or event.get("source") not in {
+        "skill",
+        "cli",
+        "mcp",
+        "github",
+        "ci",
+    }:
+        return False
+    if event.get("project_id") != project_id:
+        return False
+    try:
+        uuid.UUID(event["event_id"])
+        uuid.UUID(event["task_id"])
+        parsed = dt.datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00"))
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return False
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return False
+    event_type = event.get("event_type")
+    metadata = event.get("metadata")
+    if event_type not in TASK_EVENT_FIELDS or not isinstance(metadata, dict):
+        return False
+    if set(metadata) - TASK_EVENT_FIELDS[event_type]:
+        return False
+    try:
+        if event_type == "task.progress":
+            progress = metadata.get("progress")
+            if isinstance(progress, bool) or not isinstance(progress, int):
+                return False
+            if not 0 <= progress <= 100:
+                return False
+        elif event_type == "task.blocked":
+            if metadata.get("reason_code", "other") not in TASK_BLOCK_REASONS:
+                return False
+        elif event_type == "task.completed":
+            if metadata.get("outcome") not in {"done", "partial", "abandoned"}:
+                return False
+        if "note" in metadata and (
+            not isinstance(metadata["note"], str) or len(metadata["note"]) > 160
+        ):
+            return False
+    except TypeError:
+        return False
+    return True
+
+
+def _report_task_event(event_type, task_reference, *, percent=None, note=None, reason_code=None):
+    config = _read_config()
+    if not config.get("token") or not config.get("url"):
+        raise PermissionError("Run 'trac login' first")
+    _require_scope(config, "events:ingest")
+    if (STATE_DIR / "paused").exists():
+        print("Tracking is paused; no event was recorded.")
+        return
+    try:
+        tasks = _api_get("/v1/me/tasks")
+        task = _resolve_task(task_reference, tasks)
+    except requests.RequestException:
+        cached_ids = _read_state().get("assigned_task_ids", [])
+        try:
+            cached_task_id = str(uuid.UUID(task_reference))
+        except (ValueError, AttributeError) as exc:
+            raise RuntimeError(
+                "TRAC is unavailable; use a task UUID from the last successful task list"
+            ) from exc
+        if cached_task_id not in cached_ids:
+            raise RuntimeError(
+                "TRAC is unavailable and this task was not in the last successful assigned-task list"
+            )
+        task = {"id": cached_task_id}
+    metadata = {}
+    if event_type == "task.progress":
+        metadata["progress"] = percent
+    elif event_type == "task.blocked":
+        metadata["reason_code"] = reason_code or "other"
+    elif event_type == "task.completed":
+        metadata["outcome"] = "done"
+    if note is not None and event_type != "task.started":
+        metadata["note"] = note
+    event = _build_canonical_task_event(
+        event_type,
+        task["id"],
+        metadata,
+        config["project_id"],
+    )
+    with _queue_lock():
+        _append_bounded_queue([event])
+    result = flush_queue()
+    if result.get("auth_error"):
+        print("Task event queued, but the device credential was revoked.")
+    elif result.get("queued"):
+        print(f"Task event queued ({result['queued']} pending).")
+    else:
+        print(f"Recorded {event_type} for task {task['id']}.")
+
+
+def _tasks():
+    tasks = _api_get("/v1/me/tasks")
+    state = _read_state()
+    state["assigned_task_ids"] = [
+        task["id"]
+        for task in tasks
+        if isinstance(task, dict)
+        and isinstance(task.get("id"), str)
+        and _is_uuid(task["id"])
+    ][:MAX_QUEUE_EVENTS]
+    _write_state(state)
+    if not tasks:
+        print("No assigned tasks.")
+        return
+    for task in tasks:
+        print(
+            f"{task['id']}  {task['status']}  {task['priority']}  "
+            f"{task['progress_percent']}%{' estimate' if task.get('progress_is_estimate') else ''}  "
+            f"{task['title']}"
+        )
+
+
+def _install_skill(target):
+    workspace = Path.cwd()
+    source = Path(__file__).resolve().parents[2] / "skill" / "trac" / "SKILL.md"
+    if not source.is_file():
+        raise FileNotFoundError(
+            "TRAC universal skill source is missing; install from a TRAC checkout"
+        )
+    target_dirs = {
+        "claude": ".claude/skills",
+        "cursor": ".cursor/skills",
+        "codex": ".agents/skills",
+        "copilot": ".github/skills",
+        "generic": ".agents/skills",
+    }
+    if target == "auto":
+        candidates = [
+            (name, workspace / directory)
+            for name, directory in target_dirs.items()
+            if name != "generic" and (workspace / directory.split("/")[0]).is_dir()
+        ]
+        if len(candidates) > 1:
+            candidate_names = ", ".join(name for name, _ in candidates)
+            raise ValueError(
+                f"Multiple agent environments detected ({candidate_names}); "
+                "choose --target explicitly"
+            )
+        target = candidates[0][0] if candidates else "generic"
+    destination = workspace / target_dirs[target] / "trac" / "SKILL.md"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    content = source.read_bytes()
+    if destination.exists():
+        if destination.read_bytes() != content:
+            raise FileExistsError(
+                f"Existing skill was not overwritten: {destination}"
+            )
+        return destination
+    destination.write_bytes(content)
+    try:
+        destination.chmod(0o600)
+    except OSError:
+        pass
+    return destination
+
+
+def _disconnect():
+    config = _read_config()
+    token = config.get("token")
+    url = config.get("url")
+    if not isinstance(token, str) or not token or not isinstance(url, str):
+        _logout()
+        return
+    try:
+        response = requests.delete(
+            url.rstrip("/") + "/v1/me/device",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError("Could not reach TRAC; credentials were kept locally") from exc
+    if response.status_code not in {204, 401}:
+        raise RuntimeError(
+            f"Could not revoke device credential (HTTP {response.status_code})"
+        )
+    with _queue_lock():
+        pending = _read_jsonl(STATE_DIR / "queue.jsonl")
+        if pending:
+            state = _read_json(STATE_DIR / "state.json", {})
+            state["discarded_on_disconnect"] = (
+                state.get("discarded_on_disconnect", 0) + len(pending)
+            )
+            _write_json(STATE_DIR / "state.json", state)
+        _write_jsonl(STATE_DIR / "queue.jsonl", [])
+    _logout()
+    print("Device disconnected; server credential revoked and pending events cleared.")
+
+
 def _status():
     state = _read_state()
     queued = _queue_size()
@@ -1099,8 +1615,24 @@ def _status():
     config = _read_config()
     print(f"Tracking: {'paused' if paused else 'on'}")
     print(f"Login: {'logged in' if config.get('token') else 'not logged in'}")
-    print(f"Authentication: {'required' if state.get('auth_error') else 'ok'}")
+    authentication = "unknown"
+    if config.get("token") and config.get("url"):
+        try:
+            response = requests.get(
+                config["url"].rstrip("/") + "/v1/me/device",
+                headers={"Authorization": f"Bearer {config['token']}"},
+                timeout=5,
+            )
+            authentication = (
+                "ok" if response.status_code == 200 else "revoked or unauthorized"
+            )
+        except requests.RequestException:
+            authentication = "server unavailable"
+    elif state.get("auth_error"):
+        authentication = "revoked or unauthorized"
+    print(f"Authentication: {authentication}")
     print(f"Queued: {queued}")
+    print(f"Dropped (queue limit): {state.get('dropped_queue_events', 0)}")
     print(f"Last successful send: {state.get('last_success_at', 'never')}")
 
 
@@ -1110,11 +1642,25 @@ def _print_data():
     print(json.dumps({"queued": queued, "sent": sent}, indent=2, ensure_ascii=True))
 
 
-def _save_login(url, token):
+def _save_login(url, token, identity=None):
     _ensure_state_dir()
+    credential_store = _store_credential(token)
     config = _read_config()
-    config.update({"url": url.rstrip("/"), "token": token})
-    _write_json(STATE_DIR / "config.json", config)
+    config.pop("token", None)
+    config.update({"url": url.rstrip("/")})
+    if identity:
+        config.update(
+            {
+                "project_id": identity.get("project_id"),
+                "scopes": identity.get("scopes", []),
+                "device_id": identity.get("device_id"),
+                "credential_store": credential_store,
+            }
+        )
+    elif "scopes" not in config:
+        config["scopes"] = ["events:read", "events:ingest"]
+        config["credential_store"] = credential_store
+    _write_config(config)
     state = _read_state()
     state.pop("auth_error", None)
     _write_state(state)
@@ -1122,9 +1668,14 @@ def _save_login(url, token):
 
 def _logout():
     config = _read_config()
+    _delete_credential()
     config.pop("token", None)
-    if config:
-        _write_json(STATE_DIR / "config.json", config)
+    config.pop("project_id", None)
+    config.pop("scopes", None)
+    config.pop("device_id", None)
+    config.pop("credential_store", None)
+    if config.get("url"):
+        _write_config(config)
     else:
         try:
             (STATE_DIR / "config.json").unlink()
@@ -1140,8 +1691,13 @@ def _parser():
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     login = subparsers.add_parser("login")
-    login.add_argument("--url", required=True)
-    login.add_argument("--token", required=True)
+    login.add_argument("--url")
+    login.add_argument("--device-label", default="TRAC CLI")
+    login.add_argument(
+        "--pairing-code-stdin",
+        action="store_true",
+        help="read the one-time pairing code from standard input without echoing",
+    )
 
     emit = subparsers.add_parser("emit")
     emit.add_argument("type")
@@ -1154,12 +1710,37 @@ def _parser():
 
     subparsers.add_parser("flush")
     subparsers.add_parser("status")
+    subparsers.add_parser("tasks")
+    task = subparsers.add_parser("task")
+    task_subparsers = task.add_subparsers(dest="task_command", required=True)
+    task_start = task_subparsers.add_parser("start")
+    task_start.add_argument("task")
+    task_progress = task_subparsers.add_parser("progress")
+    task_progress.add_argument("task")
+    task_progress.add_argument("--percent", required=True, type=int)
+    task_progress.add_argument("--note")
+    task_block = task_subparsers.add_parser("block")
+    task_block.add_argument("task")
+    task_block.add_argument(
+        "--reason-code", choices=sorted(TASK_BLOCK_REASONS), default="other"
+    )
+    task_block.add_argument("--note")
+    task_done = task_subparsers.add_parser("done")
+    task_done.add_argument("task")
+    task_done.add_argument("--note")
     subparsers.add_parser("pause")
     subparsers.add_parser("resume")
     subparsers.add_parser("data")
+    subparsers.add_parser("disconnect")
     subparsers.add_parser("logout")
     init = subparsers.add_parser("init")
-    init.add_argument("--claude", action="store_true")
+    init.add_argument(
+        "--target",
+        choices=("auto", "claude", "cursor", "codex", "copilot", "generic"),
+        default="auto",
+    )
+    init.add_argument("--git-hooks", action="store_true")
+    init.add_argument("--claude", action="store_true", help=argparse.SUPPRESS)
     subparsers.add_parser("uninit")
     hook = subparsers.add_parser("hook")
     hook_subparsers = hook.add_subparsers(dest="hook_name", required=True)
@@ -1199,8 +1780,35 @@ def main(argv=None):
 
     try:
         if args.command == "login":
-            _save_login(args.url, args.token)
-            print("Logged in.")
+            if not args.url:
+                parser.error("login requires --url")
+            pairing_code = None
+            if args.pairing_code_stdin:
+                pairing_code = sys.stdin.readline().rstrip("\r\n")
+                if not pairing_code:
+                    raise ValueError("No one-time pairing code was provided on stdin")
+            _login_to_server(
+                args.url,
+                pairing_code=pairing_code,
+                device_label=args.device_label,
+            )
+            print("Logged in with a project-scoped device credential.")
+        elif args.command == "tasks":
+            _tasks()
+        elif args.command == "task":
+            event_types = {
+                "start": "task.started",
+                "progress": "task.progress",
+                "block": "task.blocked",
+                "done": "task.completed",
+            }
+            _report_task_event(
+                event_types[args.task_command],
+                args.task,
+                percent=getattr(args, "percent", None),
+                note=getattr(args, "note", None),
+                reason_code=getattr(args, "reason_code", None),
+            )
         elif args.command == "flush":
             result = flush_queue(force=True)
             print(json.dumps(result, sort_keys=True))
@@ -1218,11 +1826,16 @@ def main(argv=None):
                     pass
         elif args.command == "data":
             _print_data()
+        elif args.command == "disconnect":
+            _disconnect()
         elif args.command == "logout":
             _logout()
-            print("Logged out.")
+            print("Local credentials removed; server credential was not revoked.")
         elif args.command == "init":
-            print(f"Installed TRAC hooks in {init_hooks()}")
+            skill_path = _install_skill(args.target)
+            print(f"Installed the universal TRAC skill at {skill_path}")
+            if args.git_hooks or args.claude:
+                print(f"Installed optional Git hooks in {init_hooks()}")
             if args.claude:
                 print(f"Installed Claude Code hooks in {init_claude_hooks()}")
         elif args.command == "uninit":

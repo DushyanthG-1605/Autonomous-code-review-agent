@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,20 @@ class Response:
 
 def setup_cli(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "STATE_DIR", tmp_path / ".trac")
+    keyring_errors = types.SimpleNamespace(
+        KeyringError=RuntimeError,
+        PasswordDeleteError=KeyError,
+    )
+    credentials = {}
+    fake_keyring = types.SimpleNamespace(
+        errors=keyring_errors,
+        get_password=lambda service, account: credentials.get((service, account)),
+        set_password=lambda service, account, token: credentials.__setitem__(
+            (service, account), token
+        ),
+        delete_password=lambda service, account: credentials.pop((service, account)),
+    )
+    monkeypatch.setitem(sys.modules, "keyring", fake_keyring)
 
     def fake_git(*args, **kwargs):
         return {
@@ -238,7 +253,13 @@ def test_hooks_capture_commit_checkout_and_push_without_message_text(tmp_path):
     env["TRAC_SESSION_ID"] = session_id
     env["PATH"] = str(trac_path.parent) + os.pathsep + env.get("PATH", "")
 
-    subprocess.run([str(trac_path), "init"], cwd=repo, env=env, check=True, capture_output=True)
+    subprocess.run(
+        [str(trac_path), "init", "--git-hooks"],
+        cwd=repo,
+        env=env,
+        check=True,
+        capture_output=True,
+    )
     (repo / "change.txt").write_text("added content sentinel\n", encoding="utf-8")
     run_git("add", "change.txt")
     subprocess.run(
@@ -434,8 +455,10 @@ def test_init_claude_merges_settings_and_is_idempotent(tmp_path, monkeypatch):
 def test_init_claude_option_installs_both_hook_sets(tmp_path, monkeypatch, capsys):
     git_hooks = tmp_path / "git-hooks"
     settings_path = tmp_path / ".claude" / "settings.json"
+    skill_path = tmp_path / ".agents" / "skills" / "trac" / "SKILL.md"
     monkeypatch.setattr(cli, "init_hooks", lambda: git_hooks)
     monkeypatch.setattr(cli, "init_claude_hooks", lambda: settings_path)
+    monkeypatch.setattr(cli, "_install_skill", lambda target: skill_path)
 
     assert cli.main(["init", "--claude"]) == 0
 
@@ -521,3 +544,215 @@ def test_claude_hook_cli_reads_piped_json_without_storing_private_text(tmp_path)
     assert '"type":"agent.prompt_submitted"' in queue_text
     assert '"type":"file.edited"' in queue_text
     assert '"type":"command.run"' in queue_text
+
+
+def test_pairing_login_stores_token_outside_config_and_does_not_print_it(
+    tmp_path, monkeypatch, capsys
+):
+    setup_cli(tmp_path, monkeypatch)
+    token = "newly-paired-device-secret"
+    monkeypatch.setattr(
+        cli.requests,
+        "post",
+        lambda *args, **kwargs: Response(
+            200,
+            {
+                "access_token": token,
+                "project_id": "018f5c2a-7b6d-7a22-b33a-cb1d5e12f042",
+                "device_id": 42,
+                "scopes": ["events:read", "events:ingest"],
+            },
+        ),
+    )
+
+    identity = cli._login_to_server(
+        "https://trac.example",
+        pairing_code="one-time-code-never-logged",
+    )
+    config_path = cli.STATE_DIR / "config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+
+    assert identity["device_id"] == 42
+    assert "token" not in config
+    assert config["credential_store"] == "keyring"
+    assert not (cli.STATE_DIR / "credential.json").exists()
+    assert cli._load_credential() == token
+    assert token not in capsys.readouterr().out
+
+
+def test_task_progress_uses_canonical_v2_event_and_redacts_note(tmp_path, monkeypatch, capsys):
+    setup_cli(tmp_path, monkeypatch)
+    task_id = "018f5c2a-7b6d-7a22-b33a-cb1d5e12f044"
+    project_id = "018f5c2a-7b6d-7a22-b33a-cb1d5e12f042"
+    cli._save_login(
+        "https://trac.example",
+        "device-secret",
+        {
+            "project_id": project_id,
+            "device_id": 7,
+            "scopes": ["events:read", "events:ingest"],
+        },
+    )
+    monkeypatch.setattr(
+        cli.requests,
+        "get",
+        lambda *args, **kwargs: Response(
+            200,
+            [
+                {
+                    "id": task_id,
+                    "title": "Implement authentication",
+                    "status": "in_progress",
+                    "priority": "high",
+                    "progress_percent": 0,
+                }
+            ],
+        ),
+    )
+    submitted = []
+
+    def post(*args, **kwargs):
+        submitted.extend(kwargs["json"]["events"])
+        return Response(
+            202,
+            {"accepted": 1, "duplicates": 0, "rejected": []},
+        )
+
+    monkeypatch.setattr(cli.requests, "post", post)
+
+    assert (
+        cli.main(
+            [
+                "task",
+                "progress",
+                task_id,
+                "--percent",
+                "50",
+                "--note",
+                'Implemented flow api_key="sensitiveValue123"',
+            ]
+        )
+        == 0
+    )
+    event = submitted[0]
+    assert event["schema_version"] == 2
+    assert event["event_type"] == "task.progress"
+    assert event["task_id"] == task_id
+    assert event["project_id"] == project_id
+    assert event["source"] == "cli"
+    assert event["metadata"] == {
+        "progress": 50,
+        "note": "Implemented flow api_key=\"[REDACTED]\"",
+    }
+    assert "sensitiveValue123" not in json.dumps(queued_events())
+    assert "sensitiveValue123" not in capsys.readouterr().out
+
+
+def test_read_only_device_never_posts_queued_events(tmp_path, monkeypatch):
+    setup_cli(tmp_path, monkeypatch)
+    project_id = "018f5c2a-7b6d-7a22-b33a-cb1d5e12f042"
+    cli._save_login(
+        "https://trac.example",
+        "read-only-secret",
+        {"project_id": project_id, "scopes": ["events:read"]},
+    )
+    event = cli._build_canonical_task_event(
+        "task.started",
+        "018f5c2a-7b6d-7a22-b33a-cb1d5e12f044",
+        {},
+        project_id,
+    )
+    with cli._queue_lock():
+        cli._append_bounded_queue([event])
+
+    def fail_if_posted(*args, **kwargs):
+        raise AssertionError("collector attempted to send without ingest scope")
+
+    monkeypatch.setattr(cli.requests, "post", fail_if_posted)
+
+    assert cli.flush_queue(force=True)["scope_error"] is True
+    assert len(queued_events()) == 1
+
+
+def test_offline_task_event_uses_only_a_previously_assigned_task_id(
+    tmp_path, monkeypatch, capsys
+):
+    setup_cli(tmp_path, monkeypatch)
+    task_id = "018f5c2a-7b6d-7a22-b33a-cb1d5e12f044"
+    project_id = "018f5c2a-7b6d-7a22-b33a-cb1d5e12f042"
+    cli._save_login(
+        "https://trac.example",
+        "device-secret",
+        {
+            "project_id": project_id,
+            "scopes": ["events:read", "events:ingest"],
+        },
+    )
+    monkeypatch.setattr(
+        cli.requests,
+        "get",
+        lambda *args, **kwargs: Response(
+            200,
+            [
+                {
+                    "id": task_id,
+                    "title": "Previously assigned task",
+                    "status": "todo",
+                    "priority": "medium",
+                    "progress_percent": 0,
+                }
+            ],
+        ),
+    )
+    assert cli.main(["tasks"]) == 0
+    capsys.readouterr()
+
+    def offline(*args, **kwargs):
+        raise requests.ConnectionError("TRAC unavailable")
+
+    monkeypatch.setattr(cli.requests, "get", offline)
+    monkeypatch.setattr(cli.requests, "post", offline)
+
+    assert cli.main(["task", "start", task_id]) == 0
+    assert len(queued_events()) == 1
+    assert queued_events()[0]["task_id"] == task_id
+    assert cli.main(["task", "start", "00000000-0000-0000-0000-000000000000"]) == 1
+
+
+def test_queue_is_bounded_and_reports_dropped_events(tmp_path, monkeypatch):
+    setup_cli(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli, "MAX_QUEUE_EVENTS", 3)
+
+    with cli._queue_lock():
+        cli._append_bounded_queue([{"event_id": str(index)} for index in range(5)])
+
+    assert len(queued_events()) == 3
+    assert [event["event_id"] for event in queued_events()] == ["2", "3", "4"]
+    assert cli._read_state()["dropped_queue_events"] == 2
+
+
+def test_disconnect_revokes_device_and_clears_queued_events(tmp_path, monkeypatch):
+    setup_cli(tmp_path, monkeypatch)
+    cli._save_login(
+        "https://trac.example",
+        "device-secret",
+        {
+            "project_id": "018f5c2a-7b6d-7a22-b33a-cb1d5e12f042",
+            "scopes": ["events:read"],
+        },
+    )
+    with cli._queue_lock():
+        cli._append_bounded_queue([{"event_id": "pending"}])
+    revoked = []
+
+    def delete(*args, **kwargs):
+        revoked.append(kwargs["headers"]["Authorization"])
+        return Response(204, None)
+
+    monkeypatch.setattr(cli.requests, "delete", delete)
+
+    assert cli.main(["disconnect"]) == 0
+    assert revoked == ["Bearer device-secret"]
+    assert queued_events() == []
+    assert cli._read_config().get("token") is None
+    assert cli._read_state()["discarded_on_disconnect"] == 1

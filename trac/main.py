@@ -9,7 +9,7 @@ import sqlite3
 import threading
 import time
 from collections import deque
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from json import JSONDecodeError
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type
@@ -32,6 +32,8 @@ from trac.models import (
     GitBranchData,
     GitCommitData,
     GitPushData,
+    PairingClaim,
+    PairingCreate,
     ProjectCreate,
     SessionActivityData,
     TaskActivityData,
@@ -167,7 +169,7 @@ def _require_task_access(task, device):
         raise HTTPException(status_code=404, detail="Task not found")
 
 
-def _authenticate_device(authorization: Optional[str], scope: str):
+def _authenticate_device(authorization: Optional[str], scope: Optional[str]):
     scheme, separator, token = (authorization or "").partition(" ")
     if not separator or scheme.lower() != "bearer" or not token.strip():
         raise HTTPException(status_code=401, detail="Invalid or missing bearer token")
@@ -181,7 +183,7 @@ def _authenticate_device(authorization: Optional[str], scope: str):
                    devices.scopes, devices.auth_mode, users.public_id AS actor_id,
                    users.github_login, users.github_username, users.email,
                    users.display_name, users.role AS user_role,
-                   projects.slug AS project_slug, projects.project_key,
+                   devices.label, projects.slug AS project_slug, projects.project_key,
                    projects.project_head_id,
                    project_memberships.role AS membership_role
             FROM devices
@@ -205,11 +207,236 @@ def _authenticate_device(authorization: Optional[str], scope: str):
         scopes = json.loads(row["scopes"])
     except (TypeError, JSONDecodeError):
         scopes = []
-    if scope not in scopes:
+    if scope is not None and scope not in scopes:
         raise HTTPException(
             status_code=403, detail="Credential lacks required permission"
         )
     return row
+
+
+def _credential_scopes(device):
+    try:
+        scopes = json.loads(device["scopes"])
+    except (TypeError, JSONDecodeError):
+        return []
+    return [scope for scope in scopes if scope in {"events:read", "events:ingest"}]
+
+
+def _check_persistent_rate_limit(
+    conn, bucket_key: str, *, limit: int, window_seconds: int
+):
+    now = int(time.time())
+    conn.execute(
+        "DELETE FROM api_rate_limits WHERE window_started_at < ?",
+        (now - 24 * 60 * 60,),
+    )
+    row = conn.execute(
+        "SELECT window_started_at, request_count FROM api_rate_limits WHERE bucket_key = ?",
+        (bucket_key,),
+    ).fetchone()
+    if row is None or now - row["window_started_at"] >= window_seconds:
+        conn.execute(
+            """
+            INSERT INTO api_rate_limits (bucket_key, window_started_at, request_count)
+            VALUES (?, ?, 1)
+            ON CONFLICT(bucket_key) DO UPDATE SET
+                window_started_at = excluded.window_started_at,
+                request_count = 1
+            """,
+            (bucket_key, now),
+        )
+        return
+    if row["request_count"] >= limit:
+        retry_after = max(1, window_seconds - (now - row["window_started_at"]))
+        raise HTTPException(
+            status_code=429,
+            detail="Pairing rate limit exceeded",
+            headers={"Retry-After": str(retry_after)},
+        )
+    conn.execute(
+        "UPDATE api_rate_limits SET request_count = request_count + 1 WHERE bucket_key = ?",
+        (bucket_key,),
+    )
+
+
+def _pairing_client_bucket(request: Request) -> str:
+    client_host = request.client.host if request.client else "unknown"
+    return "pairing:claim:" + hashlib.sha256(client_host.encode("utf-8")).hexdigest()
+
+
+@app.get("/v1/me/device")
+def get_current_device(authorization: Optional[str] = Header(default=None)):
+    device = _authenticate_device(authorization, "events:read")
+    return {
+        "device_id": device["device_id"],
+        "user_id": device["actor_id"],
+        "project_id": device["project_id"],
+        "project_key": device["project_key"],
+        "scopes": _credential_scopes(device),
+        "label": device["label"],
+    }
+
+
+@app.post("/v1/pairings", status_code=201)
+def create_device_pairing(
+    payload: PairingCreate,
+    authorization: Optional[str] = Header(default=None),
+):
+    device = _authenticate_device(authorization, "events:ingest")
+    if str(payload.project_id) != device["project_id"]:
+        raise HTTPException(status_code=404, detail="Project not found")
+    issuer_scopes = set(_credential_scopes(device))
+    requested_scopes = set(payload.scopes)
+    if len(requested_scopes) != len(payload.scopes) or not requested_scopes:
+        raise HTTPException(status_code=422, detail="Invalid requested scopes")
+    if not requested_scopes.issubset(issuer_scopes):
+        raise HTTPException(status_code=403, detail="Cannot grant unowned scopes")
+
+    pairing_code = secrets.token_urlsafe(24)
+    pairing_id = str(uuid4())
+    created_at = datetime.now(timezone.utc)
+    expires_at = (created_at + timedelta(minutes=10)).isoformat().replace(
+        "+00:00", "Z"
+    )
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _check_persistent_rate_limit(
+            conn,
+            f"pairing:create:{device['device_id']}",
+            limit=5,
+            window_seconds=60 * 60,
+        )
+        conn.execute(
+            """
+            INSERT INTO device_pairings
+                (id, code_hash, user_id, project_id, scopes,
+                 created_by_device_id, created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                pairing_id,
+                hashlib.sha256(pairing_code.encode("utf-8")).hexdigest(),
+                device["user_id"],
+                device["project_id"],
+                json.dumps(sorted(requested_scopes)),
+                device["device_id"],
+                created_at.isoformat(),
+                expires_at,
+            ),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return {
+        "pairing_id": pairing_id,
+        "pairing_code": pairing_code,
+        "expires_at": expires_at,
+        "scopes": sorted(requested_scopes),
+    }
+
+
+@app.post("/v1/pairings/claim")
+def claim_device_pairing(payload: PairingClaim, request: Request):
+    code_hash = hashlib.sha256(payload.code.encode("utf-8")).hexdigest()
+    token = secrets.token_urlsafe(32)
+    timestamp = now_iso()
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _check_persistent_rate_limit(
+            conn,
+            _pairing_client_bucket(request),
+            limit=10,
+            window_seconds=60,
+        )
+        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        pairing = conn.execute(
+            """
+            SELECT device_pairings.*, projects.project_key
+            FROM device_pairings
+            JOIN projects ON projects.id = device_pairings.project_id
+            JOIN project_memberships
+              ON project_memberships.project_id = device_pairings.project_id
+             AND project_memberships.user_id = device_pairings.user_id
+            JOIN devices AS issuer
+              ON issuer.id = device_pairings.created_by_device_id
+             AND issuer.revoked_at IS NULL
+            WHERE device_pairings.code_hash = ?
+              AND device_pairings.consumed_at IS NULL
+              AND device_pairings.revoked_at IS NULL
+              AND device_pairings.expires_at > ?
+            """,
+            (code_hash, timestamp),
+        ).fetchone()
+        if pairing is None:
+            raise HTTPException(status_code=400, detail="Invalid or expired pairing code")
+        cursor = conn.execute(
+            """
+            UPDATE device_pairings SET consumed_at = ?
+            WHERE id = ? AND consumed_at IS NULL AND revoked_at IS NULL
+            """,
+            (timestamp, pairing["id"]),
+        )
+        if cursor.rowcount != 1:
+            raise HTTPException(status_code=400, detail="Invalid or expired pairing code")
+        device_cursor = conn.execute(
+            """
+            INSERT INTO devices
+                (user_id, token_hash, label, created_at, project_id, scopes)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                pairing["user_id"],
+                hashlib.sha256(token.encode("utf-8")).hexdigest(),
+                payload.device_label,
+                timestamp,
+                pairing["project_id"],
+                pairing["scopes"],
+            ),
+        )
+        scopes = json.loads(pairing["scopes"])
+        conn.commit()
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "device_id": device_cursor.lastrowid,
+            "project_id": pairing["project_id"],
+            "project_key": pairing["project_key"],
+            "user_id": str(
+                conn.execute(
+                    "SELECT public_id FROM users WHERE id = ?",
+                    (pairing["user_id"],),
+                ).fetchone()["public_id"]
+            ),
+            "scopes": scopes,
+        }
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@app.delete("/v1/me/device", status_code=204)
+def revoke_current_device(authorization: Optional[str] = Header(default=None)):
+    device = _authenticate_device(authorization, None)
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+            (now_iso(), device["device_id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _device_is_active(
@@ -549,7 +776,7 @@ def _apply_task_event(conn, task, event, device, event_id: str, timestamp: str):
         INSERT INTO task_updates
             (id, task_id, actor_id, event_id, update_type, note,
              progress_percent, progress_is_estimate, timestamp)
-        VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             str(uuid4()),
@@ -557,6 +784,7 @@ def _apply_task_event(conn, task, event, device, event_id: str, timestamp: str):
             device["user_id"],
             event_id,
             event.event_type,
+            event.metadata.get("note"),
             progress_percent,
             int(progress_is_estimate),
             timestamp,

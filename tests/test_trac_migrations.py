@@ -130,11 +130,11 @@ def test_additive_migration_preserves_and_scopes_existing_rows(tmp_path, monkeyp
     assert project["project_key"] == "personal-1"
     assert project["project_head_id"] == 1
     assert task_table is not None
-    assert migration_count == 2
+    assert migration_count == 3
 
     db.init_db()
     conn = db.get_connection()
     assert conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 3
     assert conn.execute("SELECT COUNT(*) FROM activity_event_stream").fetchone()[0] == 1
-    assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 3
     conn.close()
