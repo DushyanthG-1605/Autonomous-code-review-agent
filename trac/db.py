@@ -179,6 +179,23 @@ def _apply_migrations(conn):
                 VALUES (5, datetime('now'))
                 """
             )
+        # One-way, idempotent backup-store migration.  The legacy event ID is
+        # retained as the stable dedupe key; activity tables are never deleted.
+        conn.execute("""
+            INSERT INTO events
+                (type, source, summary, repo, actor, actor_user_id, occurred_at,
+                 timestamp, metadata, payload, project_id, device_id, legacy_id)
+            SELECT a.type, COALESCE(a.source, 'legacy'),
+                   COALESCE(json_extract(a.data, '$.summary'), a.type),
+                   a.repo, u.display_name, a.user_id, a.ts, a.received_at,
+                   COALESCE(a.data, '{}'), a.data, a.project_id, a.device_id,
+                   a.event_id
+            FROM activity_events AS a
+            LEFT JOIN users AS u ON u.id = a.user_id
+            WHERE NOT EXISTS (
+                SELECT 1 FROM events AS e WHERE e.legacy_id = a.event_id
+            )
+        """)
         conn.execute("""CREATE TRIGGER IF NOT EXISTS events_append_only_update
             BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT, 'events is append-only'); END""")
         conn.execute("""CREATE TRIGGER IF NOT EXISTS events_append_only_delete
@@ -260,6 +277,9 @@ def init_db():
             "ALTER TABLE events ADD COLUMN tool TEXT",
             "ALTER TABLE events ADD COLUMN payload TEXT",
             "ALTER TABLE events ADD COLUMN api_key_id INTEGER",
+            "ALTER TABLE events ADD COLUMN legacy_id TEXT",
+            "ALTER TABLE events ADD COLUMN project_id TEXT",
+            "ALTER TABLE events ADD COLUMN device_id INTEGER",
         ):
             try:
                 conn.execute(statement)
@@ -271,6 +291,7 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_repo_occurred ON events (repo, occurred_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_task_occurred ON events (task_key, occurred_at)")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_events_owner_external ON events (api_key_id, external_id) WHERE external_id IS NOT NULL")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_events_legacy_id ON events (legacy_id) WHERE legacy_id IS NOT NULL")
         conn.execute("""CREATE TRIGGER IF NOT EXISTS events_append_only_update
             BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT, 'events is append-only'); END""")
         conn.execute("""CREATE TRIGGER IF NOT EXISTS events_append_only_delete

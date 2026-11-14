@@ -54,13 +54,23 @@ RATE_LIMIT_WINDOW_SECONDS = 60
 STREAM_POLL_SECONDS = 0.5
 STREAM_HEARTBEAT_SECONDS = 15
 SECRET_PATTERNS = (
-    re.compile(r"(?i)\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b"),
+    re.compile(r"(?i)\b(?:gh[pousr]_[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_-]{20,})\b"),
     re.compile(r"(?i)\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"(?i)\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\b"),
+    re.compile(r"(?i)\bsk-[A-Za-z0-9_-]{16,}\b"),
     re.compile(r"(?i)\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
-    re.compile(r"(?i)\b(?:password|api[_-]?key|access[_-]?token)\s*[:=]\s*\S+"),
-    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]{16,}"),
-    re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+    re.compile(r"(?i)\bBearer\s+\S+"),
+    re.compile(
+        r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----"
+        r".*?(?:-----END (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----|$)",
+        re.DOTALL,
+    ),
+)
+KEY_VALUE_SECRET_PATTERN = re.compile(
+    r"(?i)\b([A-Za-z0-9_.-]*(?:api[_-]?key|secret|token|password)[A-Za-z0-9_.-]*)"
+    r"(\s*[:=]\s*)(['\"]?)([^\s,;}'\"]{8,})(['\"]?)"
+)
+SENSITIVE_VALUE_KEY_PATTERN = re.compile(
+    r"(?i)(?:api[_-]?key|secret|token|password)"
 )
 FORBIDDEN_PAYLOAD_KEYS = {"content", "code", "diff", "prompt", "command", "env", "secret"}
 NEW_EVENT_KEYS = {"task", "reason", "confidence", "occurredAt", "externalId", "tool", "payload", "engineer"}
@@ -245,7 +255,43 @@ def _redact_secret_text(value: Optional[str]) -> Optional[str]:
     result = value
     for pattern in SECRET_PATTERNS:
         result = pattern.sub("[REDACTED]", result)
-    return result
+    return KEY_VALUE_SECRET_PATTERN.sub(
+        lambda match: (
+            match.group(1)
+            + match.group(2)
+            + match.group(3)
+            + "[REDACTED]"
+            + match.group(5)
+        ),
+        result,
+    )
+
+
+def redact_value(obj):
+    """Redact secret-like strings recursively without changing container shape or keys."""
+    return _redact_value(obj)
+
+
+def _redact_value(obj, redact_long_values=False):
+    if isinstance(obj, str):
+        if redact_long_values and len(obj) >= 8:
+            return "[REDACTED]"
+        return _redact_secret_text(obj)
+    if isinstance(obj, dict):
+        return {
+            key: _redact_value(
+                value,
+                redact_long_values
+                or (
+                    isinstance(key, str)
+                    and SENSITIVE_VALUE_KEY_PATTERN.search(key) is not None
+                ),
+            )
+            for key, value in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_redact_value(value, redact_long_values) for value in obj]
+    return obj
 
 
 def _validate_new_event(raw: dict):
@@ -262,6 +308,37 @@ def _validate_new_event(raw: dict):
     if any(str(k).lower() in FORBIDDEN_PAYLOAD_KEYS for k in payload):
         raise ValueError("forbidden_payload_key")
     return payload
+
+
+def append_events(actor, events, source):
+    """Single append boundary for the timeline; callers own the transaction."""
+    conn = get_connection()
+    inserted = deduplicated = 0
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        for raw in events:
+            payload = _validate_new_event(raw)
+            occurred = raw.get("occurredAt") or now_iso()
+            datetime.fromisoformat(occurred.replace("Z", "+00:00"))
+            cur = conn.execute("""
+                INSERT OR IGNORE INTO events
+                (type, source, summary, repo, actor, actor_user_id, actor_hint, task_key, reason,
+                 confidence, occurred_at, external_id, tool, payload, api_key_id, timestamp, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')
+            """, (raw["type"], redact_value(source), redact_value(raw.get("summary", "")) or "",
+                  redact_value(raw.get("repo")), actor["display_name"], actor["user_id"], redact_value(raw.get("engineer")),
+                  redact_value(raw.get("task")), redact_value(raw.get("reason")), raw.get("confidence"),
+                  occurred, redact_value(raw.get("externalId")), redact_value(raw.get("tool")), json.dumps(redact_value(payload)),
+                  actor["id"] if "id" in actor.keys() and "key_hash" in actor.keys() else None, now_iso()))
+            if cur.rowcount: inserted += 1
+            else: deduplicated += 1
+        conn.commit()
+        return inserted, deduplicated
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _key_owner(authorization):
@@ -1502,17 +1579,20 @@ async def create_activity_events(request: Request):
                     payload_data = _validate_new_event(raw)
                     occurred = raw.get("occurredAt") or now_iso()
                     datetime.fromisoformat(occurred.replace("Z", "+00:00"))
-                    summary = _redact_secret_text(raw.get("summary", "")) or ""
-                    reason = _redact_secret_text(raw.get("reason"))
+                    summary = redact_value(raw.get("summary", "")) or ""
+                    reason = redact_value(raw.get("reason"))
+                    tool = redact_value(raw.get("tool"))
+                    safe_source = redact_value(raw.get("tool") or "api")
                     cur = conn.execute("""
                         INSERT OR IGNORE INTO events
                         (type, source, summary, repo, actor, actor_user_id, actor_hint, task_key, reason,
                          confidence, occurred_at, external_id, tool, payload, api_key_id, timestamp, metadata)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')
-                    """, (raw["type"], raw.get("tool") or "api", summary, raw.get("repo"),
-                          api_key["display_name"], api_key["user_id"], raw.get("engineer"), raw.get("task"),
-                          reason, raw.get("confidence"), occurred, raw.get("externalId"), raw.get("tool"),
-                          json.dumps(payload_data), api_key["id"], now_iso()))
+                    """, (raw["type"], safe_source, summary, redact_value(raw.get("repo")),
+                          api_key["display_name"], api_key["user_id"], redact_value(raw.get("engineer")),
+                          redact_value(raw.get("task")), reason, raw.get("confidence"), occurred,
+                          redact_value(raw.get("externalId")), tool, json.dumps(redact_value(payload_data)),
+                          api_key["id"], now_iso()))
                     if cur.rowcount:
                         inserted += 1
                     else:
