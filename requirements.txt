@@ -13,3 +13,5 @@ ruff
 python-dotenv
 aiofiles
 requests
+mcp>=2.0,<3
+pytest-asyncio
