@@ -11,6 +11,7 @@ def get_connection():
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
     return conn
 
 
@@ -25,6 +26,10 @@ def _apply_migrations(conn):
     )
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # Documented maintenance path: migrations may rewrite legacy rows before
+        # restoring the database-level append-only guard.
+        conn.execute("DROP TRIGGER IF EXISTS events_append_only_update")
+        conn.execute("DROP TRIGGER IF EXISTS events_append_only_delete")
         applied = {
             row["version"]
             for row in conn.execute("SELECT version FROM schema_migrations")
@@ -33,7 +38,11 @@ def _apply_migrations(conn):
             migration_path = MIGRATIONS_DIR / "001_project_scoped_events.sql"
             for statement in migration_path.read_text(encoding="utf-8").split(";"):
                 if statement.strip():
-                    conn.execute(statement)
+                    try:
+                        conn.execute(statement)
+                    except sqlite3.OperationalError as exc:
+                        if "duplicate column name" not in str(exc).lower():
+                            raise
 
             users = conn.execute(
                 "SELECT id, github_login, display_name FROM users"
@@ -170,6 +179,10 @@ def _apply_migrations(conn):
                 VALUES (5, datetime('now'))
                 """
             )
+        conn.execute("""CREATE TRIGGER IF NOT EXISTS events_append_only_update
+            BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT, 'events is append-only'); END""")
+        conn.execute("""CREATE TRIGGER IF NOT EXISTS events_append_only_delete
+            BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT, 'events is append-only'); END""")
         conn.commit()
     except Exception:
         conn.rollback()
@@ -224,6 +237,44 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                key_hash TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL DEFAULT 'API key',
+                created_at TEXT NOT NULL,
+                last_used_at TEXT,
+                revoked_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+        for statement in (
+            "ALTER TABLE events ADD COLUMN actor_user_id INTEGER",
+            "ALTER TABLE events ADD COLUMN actor_hint TEXT",
+            "ALTER TABLE events ADD COLUMN task_key TEXT",
+            "ALTER TABLE events ADD COLUMN reason TEXT",
+            "ALTER TABLE events ADD COLUMN confidence REAL",
+            "ALTER TABLE events ADD COLUMN occurred_at TEXT",
+            "ALTER TABLE events ADD COLUMN external_id TEXT",
+            "ALTER TABLE events ADD COLUMN tool TEXT",
+            "ALTER TABLE events ADD COLUMN payload TEXT",
+            "ALTER TABLE events ADD COLUMN api_key_id INTEGER",
+        ):
+            try:
+                conn.execute(statement)
+            except sqlite3.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_occurred_at ON events (occurred_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_actor_occurred ON events (actor_user_id, occurred_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_repo_occurred ON events (repo, occurred_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_task_occurred ON events (task_key, occurred_at)")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_events_owner_external ON events (api_key_id, external_id) WHERE external_id IS NOT NULL")
+        conn.execute("""CREATE TRIGGER IF NOT EXISTS events_append_only_update
+            BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT, 'events is append-only'); END""")
+        conn.execute("""CREATE TRIGGER IF NOT EXISTS events_append_only_delete
+            BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT, 'events is append-only'); END""")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS activity_events (
                 event_id TEXT PRIMARY KEY,

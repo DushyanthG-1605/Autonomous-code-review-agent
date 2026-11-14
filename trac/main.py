@@ -56,12 +56,14 @@ STREAM_HEARTBEAT_SECONDS = 15
 SECRET_PATTERNS = (
     re.compile(r"(?i)\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b"),
     re.compile(r"(?i)\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"(?i)\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"(?i)\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\b"),
     re.compile(r"(?i)\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
     re.compile(r"(?i)\b(?:password|api[_-]?key|access[_-]?token)\s*[:=]\s*\S+"),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]{16,}"),
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
 )
+FORBIDDEN_PAYLOAD_KEYS = {"content", "code", "diff", "prompt", "command", "env", "secret"}
+NEW_EVENT_KEYS = {"task", "reason", "confidence", "occurredAt", "externalId", "tool", "payload", "engineer"}
 ACTIVITY_DATA_MODELS: Dict[str, Type[BaseModel]] = {
     "session.start": SessionActivityData,
     "session.end": SessionActivityData,
@@ -214,6 +216,96 @@ def _authenticate_device(authorization: Optional[str], scope: Optional[str]):
             status_code=403, detail="Credential lacks required permission"
         )
     return row
+
+
+def _authenticate_api_key(authorization: Optional[str]):
+    scheme, separator, token = (authorization or "").partition(" ")
+    if not separator or scheme.lower() != "bearer" or not token.strip() or not token.strip().startswith("trc_"):
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    digest = hashlib.sha256(token.strip().encode("utf-8")).hexdigest()
+    conn = get_connection()
+    try:
+        row = conn.execute("""
+            SELECT api_keys.*, users.display_name, users.github_login
+            FROM api_keys JOIN users ON users.id = api_keys.user_id
+            WHERE api_keys.key_hash = ? AND api_keys.revoked_at IS NULL
+        """, (digest,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=401, detail="Invalid or revoked API key")
+        conn.execute("UPDATE api_keys SET last_used_at = ? WHERE id = ?", (now_iso(), row["id"]))
+        conn.commit()
+        return row
+    finally:
+        conn.close()
+
+
+def _redact_secret_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    result = value
+    for pattern in SECRET_PATTERNS:
+        result = pattern.sub("[REDACTED]", result)
+    return result
+
+
+def _validate_new_event(raw: dict):
+    if not isinstance(raw.get("type"), str) or not re.fullmatch(r"[a-z][a-z0-9]*(?:\.[a-z0-9_-]+)+", raw["type"]) or len(raw["type"]) > 64:
+        raise ValueError("type")
+    for field, maximum in (("summary", 500), ("reason", 2000), ("task", 200), ("repo", 200), ("tool", 80), ("externalId", 200)):
+        if raw.get(field) is not None and (not isinstance(raw[field], str) or len(raw[field]) > maximum):
+            raise ValueError(field)
+    if raw.get("confidence") is not None and (not isinstance(raw["confidence"], (int, float)) or not 0 <= raw["confidence"] <= 1):
+        raise ValueError("confidence")
+    payload = raw.get("payload", {})
+    if not isinstance(payload, dict) or len(json.dumps(payload)) > 8192:
+        raise ValueError("payload")
+    if any(str(k).lower() in FORBIDDEN_PAYLOAD_KEYS for k in payload):
+        raise ValueError("forbidden_payload_key")
+    return payload
+
+
+def _key_owner(authorization):
+    try:
+        return _authenticate_device(authorization, None)["user_id"]
+    except HTTPException:
+        raise
+
+
+@app.post("/v1/api-keys", status_code=201)
+@app.post("/v1/settings/api-keys", status_code=201)
+def create_api_key(request: Request, authorization: Optional[str] = Header(default=None)):
+    user_id = _key_owner(authorization)
+    name = "API key"
+    token = "trc_" + secrets.token_urlsafe(32)
+    conn = get_connection()
+    try:
+        cur = conn.execute("INSERT INTO api_keys (user_id, key_hash, name, created_at) VALUES (?, ?, ?, ?)", (user_id, hashlib.sha256(token.encode()).hexdigest(), name, now_iso()))
+        conn.commit()
+        return {"id": cur.lastrowid, "name": name, "api_key": token, "created_at": now_iso()}
+    finally: conn.close()
+
+
+@app.get("/v1/api-keys")
+@app.get("/v1/settings/api-keys")
+def list_api_keys(authorization: Optional[str] = Header(default=None)):
+    user_id = _key_owner(authorization)
+    conn = get_connection()
+    try:
+        return [dict(row) for row in conn.execute("SELECT id, name, created_at, last_used_at, revoked_at FROM api_keys WHERE user_id = ? ORDER BY id DESC", (user_id,)).fetchall()]
+    finally: conn.close()
+
+
+@app.delete("/v1/api-keys/{key_id}")
+@app.delete("/v1/settings/api-keys/{key_id}")
+def revoke_api_key(key_id: int, authorization: Optional[str] = Header(default=None)):
+    user_id = _key_owner(authorization)
+    conn = get_connection()
+    try:
+        cur = conn.execute("UPDATE api_keys SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL", (now_iso(), key_id, user_id))
+        conn.commit()
+        if not cur.rowcount: raise HTTPException(status_code=404, detail="API key not found")
+        return {"revoked": True}
+    finally: conn.close()
 
 
 def _credential_scopes(device):
@@ -1363,8 +1455,11 @@ async def receive_github_webhook(request: Request):
 
 @app.post("/v1/events", status_code=202)
 async def create_activity_events(request: Request):
-    device = _authenticate_device(request.headers.get("authorization"), "events:ingest")
-    retry_after = _check_rate_limit(device["device_id"])
+    authorization = request.headers.get("authorization")
+    is_api_key = bool(authorization and authorization.lower().startswith("bearer trc_"))
+    api_key = _authenticate_api_key(authorization) if is_api_key else None
+    device = None if is_api_key else _authenticate_device(authorization, "events:ingest")
+    retry_after = _check_rate_limit(device["device_id"]) if device else None
     if retry_after is not None:
         raise HTTPException(
             status_code=429,
@@ -1392,6 +1487,42 @@ async def create_activity_events(request: Request):
         raise HTTPException(
             status_code=413, detail="A batch may contain at most 100 events"
         )
+
+    if is_api_key and any(isinstance(item, dict) and (NEW_EVENT_KEYS & set(item)) for item in raw_events):
+        inserted = 0
+        deduplicated = 0
+        rejected = []
+        conn = get_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for index, raw in enumerate(raw_events):
+                try:
+                    if not isinstance(raw, dict):
+                        raise ValueError("event")
+                    payload_data = _validate_new_event(raw)
+                    occurred = raw.get("occurredAt") or now_iso()
+                    datetime.fromisoformat(occurred.replace("Z", "+00:00"))
+                    summary = _redact_secret_text(raw.get("summary", "")) or ""
+                    reason = _redact_secret_text(raw.get("reason"))
+                    cur = conn.execute("""
+                        INSERT OR IGNORE INTO events
+                        (type, source, summary, repo, actor, actor_user_id, actor_hint, task_key, reason,
+                         confidence, occurred_at, external_id, tool, payload, api_key_id, timestamp, metadata)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')
+                    """, (raw["type"], raw.get("tool") or "api", summary, raw.get("repo"),
+                          api_key["display_name"], api_key["user_id"], raw.get("engineer"), raw.get("task"),
+                          reason, raw.get("confidence"), occurred, raw.get("externalId"), raw.get("tool"),
+                          json.dumps(payload_data), api_key["id"], now_iso()))
+                    if cur.rowcount:
+                        inserted += 1
+                    else:
+                        deduplicated += 1
+                except (KeyError, TypeError, ValueError, OverflowError):
+                    rejected.append({"index": index, "reason": "invalid_event"})
+            conn.commit()
+        finally:
+            conn.close()
+        return Response(content=json.dumps({"inserted": inserted, "deduplicated": deduplicated, "rejected": rejected}), media_type="application/json", status_code=201)
 
     accepted = 0
     duplicates = 0
@@ -1590,12 +1721,56 @@ async def stream_activity_events(
     )
 
 
+@app.get("/v1/stream")
+async def stream_personal_events(request: Request, authorization: Optional[str] = Header(default=None)):
+    key = _authenticate_api_key(authorization)
+    async def stream():
+        last_id = 0
+        yield "retry: 3000\n\n"
+        while not await request.is_disconnected():
+            conn = get_connection()
+            try:
+                rows = conn.execute("SELECT events.*, users.display_name AS actor_name, users.github_username AS actor_avatar FROM events JOIN users ON users.id = events.actor_user_id WHERE events.api_key_id = ? AND events.id > ? ORDER BY events.id LIMIT 100", (key["id"], last_id)).fetchall()
+            finally: conn.close()
+            for row in rows:
+                last_id = row["id"]
+                yield f"id: {last_id}\nevent: event\ndata: {json.dumps(dict(row), separators=(',', ':'))}\n\n"
+            if not rows: await asyncio.sleep(STREAM_POLL_SECONDS)
+    return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @app.get("/v1/events")
 def list_activity_events(
     response: Response,
     authorization: Optional[str] = Header(default=None),
     limit: int = 100,
+    actor: Optional[str] = None,
+    type: Optional[str] = None,
+    repo: Optional[str] = None,
+    task: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    search: Optional[str] = None,
+    cursor: Optional[int] = None,
 ):
+    if authorization and authorization.lower().startswith("bearer trc_"):
+        key = _authenticate_api_key(authorization)
+        if not 1 <= limit <= 200:
+            raise HTTPException(status_code=422, detail="limit must be between 1 and 200")
+        clauses = ["api_key_id = ?"]
+        params: list = [key["id"]]
+        for column, value in (("type", type), ("repo", repo), ("task_key", task), ("actor", actor)):
+            if value:
+                clauses.append(f"{column} = ?"); params.append(value)
+        if since: clauses.append("occurred_at >= ?"); params.append(since)
+        if until: clauses.append("occurred_at <= ?"); params.append(until)
+        if search: clauses.append("(summary LIKE ? OR reason LIKE ?)"); params.extend([f"%{search}%", f"%{search}%"])
+        if cursor: clauses.append("events.id < ?"); params.append(cursor)
+        conn = get_connection()
+        try:
+            rows = conn.execute(f"SELECT events.*, users.display_name AS actor_name, users.github_username AS actor_avatar FROM events JOIN users ON users.id = events.actor_user_id WHERE {' AND '.join(clauses)} ORDER BY events.id DESC LIMIT ?", (*params, limit)).fetchall()
+        finally: conn.close()
+        return [dict(row) for row in rows]
     device = _authenticate_device(authorization, "events:read")
     if not 1 <= limit <= 200:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 200")
@@ -1721,10 +1896,6 @@ def _insert_compatibility_stream_event(
         """,
         (event_id, device["project_id"], timestamp),
     )
-    conn.execute(
-        "UPDATE events SET activity_event_id = ? WHERE id = ?",
-        (event_id, row_id),
-    )
 
 
 @app.post("/api/events", response_model=Event)
@@ -1778,13 +1949,8 @@ def create_event(event: EventCreate, request: Request):
                         execution_id, status, metadata, project_id, actor_user_id
                     )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(project_id, execution_id)
-                WHERE execution_id IS NOT NULL DO UPDATE SET
-                    type = excluded.type, source = excluded.source,
-                    summary = excluded.summary,
-                    repo = excluded.repo, ref = excluded.ref, actor = excluded.actor,
-                    status = excluded.status, metadata = excluded.metadata,
-                    actor_user_id = excluded.actor_user_id
+                    ON CONFLICT(project_id, execution_id)
+                    WHERE execution_id IS NOT NULL DO NOTHING
                 """,
                 values,
             )

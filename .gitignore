@@ -34,3 +34,5 @@ logs/
 screenshots/
 
 trac/trac.db
+
+.pytest_tmp/
