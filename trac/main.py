@@ -186,7 +186,7 @@ def _authenticate_device(authorization: Optional[str], scope: Optional[str]):
                    users.github_login, users.github_username, users.email,
                    users.display_name, users.role AS user_role,
                    devices.label, projects.slug AS project_slug, projects.project_key,
-                   projects.project_head_id,
+                   projects.name AS project_name, projects.project_head_id,
                    project_memberships.role AS membership_role
             FROM devices
             JOIN users ON users.id = devices.user_id
@@ -269,13 +269,30 @@ def _pairing_client_bucket(request: Request) -> str:
 @app.get("/v1/me/device")
 def get_current_device(authorization: Optional[str] = Header(default=None)):
     device = _authenticate_device(authorization, "events:read")
+    conn = get_connection()
+    try:
+        last_reported = conn.execute(
+            """
+            SELECT MAX(received_at) FROM activity_events
+            WHERE device_id = ?
+            """,
+            (device["device_id"],),
+        ).fetchone()[0]
+    finally:
+        conn.close()
     return {
         "device_id": device["device_id"],
         "user_id": device["actor_id"],
+        "display_name": device["display_name"],
+        "email": device["email"],
+        "github_username": device["github_username"],
+        "role": device["membership_role"],
         "project_id": device["project_id"],
+        "project_name": device["project_name"],
         "project_key": device["project_key"],
         "scopes": _credential_scopes(device),
         "label": device["label"],
+        "last_reported_at": last_reported,
     }
 
 
@@ -401,6 +418,10 @@ def claim_device_pairing(payload: PairingClaim, request: Request):
                 pairing["scopes"],
             ),
         )
+        conn.execute(
+            "UPDATE device_pairings SET claimed_device_id = ? WHERE id = ?",
+            (device_cursor.lastrowid, pairing["id"]),
+        )
         scopes = json.loads(pairing["scopes"])
         conn.commit()
         return {
@@ -425,6 +446,56 @@ def claim_device_pairing(payload: PairingClaim, request: Request):
         raise
     finally:
         conn.close()
+
+
+@app.get("/v1/pairings/{pairing_id}")
+def get_pairing_status(
+    pairing_id: str, authorization: Optional[str] = Header(default=None)
+):
+    device = _authenticate_device(authorization, "events:ingest")
+    try:
+        pairing_id = str(UUID(pairing_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Pairing not found") from exc
+    conn = get_connection()
+    try:
+        pairing = conn.execute(
+            """
+            SELECT device_pairings.*, devices.label AS claimed_device_label,
+                   devices.revoked_at AS claimed_device_revoked_at
+            FROM device_pairings
+            LEFT JOIN devices ON devices.id = device_pairings.claimed_device_id
+            WHERE device_pairings.id = ?
+              AND device_pairings.created_by_device_id = ?
+              AND device_pairings.project_id = ?
+            """,
+            (pairing_id, device["device_id"], device["project_id"]),
+        ).fetchone()
+    finally:
+        conn.close()
+    if pairing is None:
+        raise HTTPException(status_code=404, detail="Pairing not found")
+    if pairing["revoked_at"]:
+        status = "revoked"
+    elif pairing["consumed_at"]:
+        status = (
+            "revoked"
+            if pairing["claimed_device_revoked_at"]
+            else "claimed"
+        )
+    elif datetime.fromisoformat(pairing["expires_at"].replace("Z", "+00:00")) <= datetime.now(
+        timezone.utc
+    ):
+        status = "expired"
+    else:
+        status = "pending"
+    return {
+        "pairing_id": pairing_id,
+        "status": status,
+        "expires_at": pairing["expires_at"],
+        "device_id": pairing["claimed_device_id"],
+        "device_label": pairing["claimed_device_label"],
+    }
 
 
 @app.delete("/v1/me/device", status_code=204)
@@ -633,6 +704,8 @@ def _canonical_response(conn, event_id: str, project_id: str):
         SELECT activity_events.event_id, activity_events.schema_version,
                activity_events.type AS event_type, activity_events.project_id,
                activity_events.task_id, users.public_id AS actor_id,
+               users.display_name AS actor_display_name,
+               users.github_username AS actor_github_username,
                activity_events.source, activity_events.ts AS occurred_at,
                activity_events.received_at, activity_events.data AS metadata
         FROM activity_events
@@ -700,12 +773,13 @@ def _ingest_canonical(conn, event: CanonicalEvent, device, received_at: str):
         return False
 
     data = event.metadata
+    device_id = device["device_id"] if "device_id" in device.keys() else None
     conn.execute(
         """
         INSERT INTO activity_events
             (event_id, schema_version, type, ts, received_at, user_id, repo, branch,
-             source, data, project_id, task_id)
-        VALUES (?, 2, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)
+             source, data, project_id, task_id, device_id)
+        VALUES (?, 2, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)
         """,
         (
             event_id,
@@ -717,6 +791,7 @@ def _ingest_canonical(conn, event: CanonicalEvent, device, received_at: str):
             json.dumps(data),
             device["project_id"],
             str(event.task_id) if event.task_id else None,
+            device_id,
         ),
     )
     conn.execute(
@@ -812,8 +887,8 @@ def _ingest_legacy(conn, event: VersionedEvent, device, received_at: str):
         """
         INSERT INTO activity_events
             (event_id, schema_version, type, ts, received_at, session_id, user_id,
-             repo, branch, source, tool, data, project_id)
-        VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             repo, branch, source, tool, data, project_id, device_id)
+        VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event_id,
@@ -828,6 +903,7 @@ def _ingest_legacy(conn, event: VersionedEvent, device, received_at: str):
             event.tool,
             json.dumps(data),
             device["project_id"],
+            device["device_id"],
         ),
     )
     conn.execute(
@@ -1433,7 +1509,9 @@ async def stream_activity_events(
                            activity_events.project_id, activity_events.task_id,
                            activity_events.user_id,
                            assigned_task.assignee_id AS task_assignee_id,
-                           users.public_id AS actor_id, activity_events.source,
+                           users.public_id AS actor_id,
+                           users.display_name AS actor_display_name,
+                           activity_events.device_id, activity_events.source,
                            activity_events.tool,
                            activity_events.ts AS occurred_at,
                            activity_events.received_at,
@@ -1465,6 +1543,7 @@ async def stream_activity_events(
                         continue
                     result.pop("user_id", None)
                     result.pop("task_assignee_id", None)
+                    result.pop("device_id", None)
                     frame_type = "activity"
                     if result["source"] == "compat-api":
                         frame_type = "compatibility"
@@ -1618,8 +1697,8 @@ def _insert_compatibility_stream_event(
         """
         INSERT INTO activity_events
             (event_id, schema_version, type, ts, received_at, user_id, repo, branch,
-             source, tool, data, project_id)
-        VALUES (?, 1, ?, ?, ?, ?, ?, ?, 'compat-api', ?, ?, ?)
+             source, tool, data, project_id, device_id)
+        VALUES (?, 1, ?, ?, ?, ?, ?, ?, 'compat-api', ?, ?, ?, ?)
         """,
         (
             event_id,
@@ -1632,6 +1711,7 @@ def _insert_compatibility_stream_event(
             event.source,
             json.dumps(event.metadata),
             device["project_id"],
+            device["device_id"],
         ),
     )
     conn.execute(
@@ -1915,6 +1995,9 @@ def _project_response(row):
         "description": row["description"],
         "project_key": row["project_key"],
         "project_head_id": row["head_public_id"],
+        "project_head_name": row["head_display_name"],
+        "member_count": row["member_count"],
+        "members": json.loads(row["members_json"] or "[]"),
         "created_at": row["created_at"],
         "role": row["membership_role"],
     }
@@ -1924,7 +2007,17 @@ def _project_detail_row(conn, project_id: str, user_id: int):
     return conn.execute(
         """
         SELECT projects.*, users.public_id AS head_public_id,
-               project_memberships.role AS membership_role
+               users.display_name AS head_display_name,
+               project_memberships.role AS membership_role,
+               (SELECT COUNT(*) FROM project_memberships AS members
+                WHERE members.project_id = projects.id) AS member_count,
+               (SELECT json_group_array(json_object(
+                    'id', member_user.public_id,
+                    'display_name', member_user.display_name,
+                    'role', member_membership.role))
+                FROM project_memberships AS member_membership
+                JOIN users AS member_user ON member_user.id = member_membership.user_id
+                WHERE member_membership.project_id = projects.id) AS members_json
         FROM projects
         JOIN project_memberships
           ON project_memberships.project_id = projects.id
@@ -1944,7 +2037,17 @@ def list_projects(authorization: Optional[str] = Header(default=None)):
         rows = conn.execute(
             """
             SELECT projects.*, users.public_id AS head_public_id,
-                   project_memberships.role AS membership_role
+                   users.display_name AS head_display_name,
+                   project_memberships.role AS membership_role,
+                   (SELECT COUNT(*) FROM project_memberships AS members
+                    WHERE members.project_id = projects.id) AS member_count,
+                   (SELECT json_group_array(json_object(
+                        'id', member_user.public_id,
+                        'display_name', member_user.display_name,
+                        'role', member_membership.role))
+                    FROM project_memberships AS member_membership
+                    JOIN users AS member_user ON member_user.id = member_membership.user_id
+                    WHERE member_membership.project_id = projects.id) AS members_json
             FROM project_memberships
             JOIN projects ON projects.id = project_memberships.project_id
             LEFT JOIN users ON users.id = projects.project_head_id
@@ -2036,6 +2139,77 @@ def get_project(project_id: str, authorization: Optional[str] = Header(default=N
     if row is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return _project_response(row)
+
+
+@app.get("/v1/projects/{project_id}/devices")
+def list_project_devices(
+    project_id: str, authorization: Optional[str] = Header(default=None)
+):
+    device = _authenticate_device(authorization, "events:read")
+    project_id = _project_identifier(project_id)
+    _require_project_device(device, project_id)
+    if not _is_project_head(device):
+        raise HTTPException(
+            status_code=403, detail="Only project heads can manage project devices"
+        )
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT devices.id AS device_id, devices.label, devices.scopes,
+                   devices.auth_mode, devices.created_at, devices.revoked_at,
+                   users.public_id AS user_id, users.display_name,
+                   projects.name AS project_name,
+                   (SELECT MAX(activity_events.received_at)
+                    FROM activity_events
+                    WHERE activity_events.device_id = devices.id) AS last_reported_at
+            FROM devices
+            JOIN users ON users.id = devices.user_id
+            JOIN projects ON projects.id = devices.project_id
+            WHERE devices.project_id = ?
+            ORDER BY devices.created_at DESC, devices.id DESC
+            """,
+            (project_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["scopes"] = json.loads(item["scopes"] or "[]")
+        item["status"] = "revoked" if item["revoked_at"] else "authorized"
+        result.append(item)
+    return result
+
+
+@app.delete("/v1/projects/{project_id}/devices/{target_device_id}", status_code=204)
+def revoke_project_device(
+    project_id: str,
+    target_device_id: int,
+    authorization: Optional[str] = Header(default=None),
+):
+    device = _authenticate_device(authorization, "events:ingest")
+    project_id = _project_identifier(project_id)
+    _require_project_device(device, project_id)
+    if not _is_project_head(device):
+        raise HTTPException(
+            status_code=403, detail="Only project heads can revoke project devices"
+        )
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            """
+            UPDATE devices SET revoked_at = ?
+            WHERE id = ? AND project_id = ? AND revoked_at IS NULL
+            """,
+            (now_iso(), target_device_id, project_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    if cursor.rowcount != 1:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return Response(status_code=204)
 
 
 def _task_list_rows(conn, project_id: str, where: str = "", params=()):
@@ -2417,7 +2591,7 @@ def get_project_overview(
 
 @app.get("/")
 def dashboard():
-    return FileResponse(STATIC_DIR / "dashboard.html")
+    return FileResponse(STATIC_DIR / "dashboard-v2.html")
 
 
 @app.get("/legacy")

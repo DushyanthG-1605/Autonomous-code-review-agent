@@ -99,9 +99,19 @@ require a credential scoped to that project.
 | `GET /v1/tasks/{id}` | Project head or assigned member gets task and update history. |
 | `PATCH /v1/tasks/{id}` | Head edits task fields; assigned member can report status, progress, and a note. |
 | `GET /v1/me/tasks` | Assigned tasks in the credential's project. |
+| `GET /v1/me/device` | Current credential identity, project, scopes, and last event timestamp. |
+| `GET /v1/projects/{id}/devices` | Project head only; authorized devices with scopes and last event attribution. |
+| `DELETE /v1/projects/{id}/devices/{device_id}` | Project head only; revoke a device in that project. |
+| `GET /v1/pairings/{pairing_id}` | Pairing issuer only; reports pending, claimed, expired, or revoked status. |
 | `GET /v1/projects/{id}/activity` | Project head only; authorized project event feed. |
 | `GET /v1/projects/{id}/overview` | Project head only; task counts by state. |
 | `POST /v1/dev/login` | No-password local login, disabled unless explicitly enabled for development. |
+
+Dashboard device attribution and pairing claim linkage are added by the
+additive `005_dashboard_device_activity.sql` migration. Historical events keep
+a null device attribution; new device-originated events record the authenticated
+device ID. GitHub/CI events are server-originated and remain unattributed to a
+device.
 
 ### Create a project
 

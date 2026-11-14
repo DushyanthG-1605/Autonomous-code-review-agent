@@ -35,8 +35,11 @@ def device():
     )
     project_id = str(uuid.uuid4())
     conn.execute(
-        "INSERT INTO projects (id, slug, name, created_at) VALUES (?, ?, ?, ?)",
-        (project_id, "test-project", "Test Project", now_iso()),
+        """
+        INSERT INTO projects (id, slug, name, project_head_id, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (project_id, "test-project", "Test Project", user_cursor.lastrowid, now_iso()),
     )
     conn.execute(
         """
@@ -147,6 +150,109 @@ def add_project_member(project_id, github_login, role="member"):
     conn.commit()
     conn.close()
     return token, public_id
+
+
+def test_dashboard_routes_preserve_legacy_and_serve_new_dashboard(api):
+    root = api.get("/")
+    legacy = api.get("/legacy")
+
+    assert root.status_code == 200
+    assert "dashboard-v2.css" in root.text
+    assert legacy.status_code == 200
+    assert "dashboard-v2.css" not in legacy.text
+
+
+def test_device_activity_inventory_and_revocation(api, device):
+    token, device_id = device
+    auth = {"Authorization": f"Bearer {token}"}
+    profile = api.get("/v1/me/device", headers=auth)
+    project_id = profile.json()["project_id"]
+
+    event = {
+        "event_id": str(uuid.uuid4()),
+        "schema_version": 2,
+        "event_type": "session.started",
+        "source": "cli",
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+        "metadata": {},
+    }
+    assert api.post("/v1/events", headers=auth, json=event).status_code == 202
+
+    profile = api.get("/v1/me/device", headers=auth).json()
+    assert profile["display_name"] == "Test User"
+    assert profile["project_name"] == "Test Project"
+    assert profile["last_reported_at"]
+
+    project = api.get(f"/v1/projects/{project_id}", headers=auth).json()
+    assert project["project_head_name"] == "Test User"
+    assert project["member_count"] == 1
+    assert project["members"][0]["display_name"] == "Test User"
+    feed = api.get("/v1/events", headers=auth).json()
+    assert feed[0]["actor_display_name"] == "Test User"
+
+    inventory = api.get(f"/v1/projects/{project_id}/devices", headers=auth)
+    assert inventory.status_code == 200
+    device_info = next(row for row in inventory.json() if row["device_id"] == device_id)
+    assert device_info["status"] == "authorized"
+    assert device_info["last_reported_at"]
+
+    revoked = api.delete(
+        f"/v1/projects/{project_id}/devices/{device_id}", headers=auth
+    )
+    assert revoked.status_code == 204
+    assert api.get("/v1/me/device", headers=auth).status_code == 401
+
+
+def test_pairing_status_reports_real_claim_and_revocation(api, device):
+    token, _ = device
+    auth = {"Authorization": f"Bearer {token}"}
+    profile = api.get("/v1/me/device", headers=auth).json()
+    created = api.post(
+        "/v1/pairings",
+        headers=auth,
+        json={"project_id": profile["project_id"], "scopes": ["events:read"]},
+    )
+    assert created.status_code == 201
+    pairing = created.json()
+
+    pending = api.get(f"/v1/pairings/{pairing['pairing_id']}", headers=auth)
+    assert pending.status_code == 200
+    assert pending.json()["status"] == "pending"
+
+    claimed = api.post("/v1/pairings/claim", json={
+        "code": pairing["pairing_code"],
+        "device_label": "dashboard test device",
+    })
+    assert claimed.status_code == 200
+    status = api.get(f"/v1/pairings/{pairing['pairing_id']}", headers=auth)
+    assert status.json()["status"] == "claimed"
+    assert status.json()["device_id"] == claimed.json()["device_id"]
+
+
+def test_device_inventory_is_project_head_only_and_project_scoped(
+    api, device, second_device
+):
+    token, _ = device
+    member_token, _ = add_project_member(
+        api.get("/v1/me/device", headers={"Authorization": f"Bearer {token}"}).json()[
+            "project_id"
+        ],
+        "dashboard-member",
+    )
+    project_id = api.get(
+        "/v1/me/device", headers={"Authorization": f"Bearer {token}"}
+    ).json()["project_id"]
+    member_inventory = api.get(
+        f"/v1/projects/{project_id}/devices",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert member_inventory.status_code == 403
+
+    cross_project = api.get(
+        f"/v1/projects/{project_id}/devices",
+        headers={"Authorization": f"Bearer {second_device}"},
+    )
+    assert cross_project.status_code == 404
 
 
 def activity_event(event_id="01JGFJJZ00A1B2C3D4E5F6G7H8", **overrides):

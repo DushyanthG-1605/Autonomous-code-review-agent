@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const stylesheet = readFileSync(resolve(process.cwd(), "trac/static/dashboard.css"), "utf8");
+const modernStylesheet = readFileSync(resolve(process.cwd(), "trac/static/dashboard-v2.css"), "utf8");
+const modernDashboard = readFileSync(resolve(process.cwd(), "trac/static/dashboard-v2.html"), "utf8");
 
 function readTokens(selector) {
     const selectorStart = stylesheet.indexOf(selector);
@@ -36,13 +38,23 @@ describe("dashboard theme tokens", () => {
         });
     });
 
-    it("retains the existing light theme colors", () => {
+    it("uses an accessible cyan accent in the light theme", () => {
         expect(readTokens(":root")).toMatchObject({
             bg: "#F6F7F9",
             surface: "#FFFFFF",
             text: "#101828",
             "text-muted": "#475467",
-            accent: "#4F46E5"
+            accent: "#087F8C"
         });
+    });
+
+    it("defines both themes and all dashboard destinations", () => {
+        expect(modernStylesheet).toContain("--accent: #087f8c");
+        expect(modernStylesheet).toContain("--accent: #22d3ee");
+        for (const destination of ["overview", "activity", "projects", "tasks", "integrate", "connections", "settings"]) {
+            expect(modernDashboard).toContain(`data-page="${destination}"`);
+        }
+        expect(modernDashboard).toContain('href="/legacy"');
+        expect(modernDashboard).toContain('id="main"');
     });
 });

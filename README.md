@@ -22,8 +22,11 @@ python -m trac.manage add-project-member <slug> <member_login>
 Each command prints a device token once; only its SHA-256 hash is stored. The
 token is scoped to one project and server-side permissions. Use it as a bearer
 credential for `/v1/events` ingestion, project-filtered `/v1/events` reads, and
-the SSE stream. The dashboard's **Set API token** button stores the token only
-in the current browser session. Event batches are limited to 100 records and
+the SSE stream. The engineering intelligence dashboard is served at `/`; the
+previous dashboard remains available at `/legacy`. Project credentials entered
+in the new dashboard are kept only in the current browser session. Connect one or
+more project-scoped credentials to load only authorized project data. Event
+batches are limited to 100 records and
 256 KB, with a per-device limit of 120 requests per minute. See
 [`docs/TRAC_EVENT_CONTRACT.md`](docs/TRAC_EVENT_CONTRACT.md) for the version-2
 contract, compatibility behavior, and stream protocol. Project/task APIs,
