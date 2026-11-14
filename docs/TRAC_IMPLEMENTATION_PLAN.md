@@ -1,8 +1,8 @@
 # TRAC Implementation Plan
 
-This dependency-ordered roadmap reflects work completed through Phase 3. It
+This dependency-ordered roadmap reflects work completed through Phase 4. It
 preserves FastAPI, SQLite, the collector, and the dashboard; no framework
-rewrite is planned. Phases 4–7 are future work and require approval before
+rewrite is planned. Phases 5–7 remain future work and require approval before
 implementation.
 
 ## Phase 1 — Architecture audit and stabilization (complete)
@@ -51,26 +51,31 @@ usernames from existing logins. Do not delete historical activity.
 event-linking, estimate, and migration tests. Version-1 task events remain
 unlinked because that envelope has no task UUID.
 
-## Phase 4 — Producer alignment and connection lifecycle
+## Phase 4 — Universal skill, collector, and secure pairing (complete)
 
 **Depends on:** Phases 2 and 3.
 
-- Align collector, skill, CLI, MCP adapters, and review reporter with the
-  version-2 contract where structured task IDs are available.
-- Introduce secure, short-lived, single-use device pairing only if deployment
-  needs a user-friendly alternative to project-scoped token bootstrap.
-- Preserve local queue/retry/pause behavior; expose authorization and
-  validation failures without leaking secrets.
-- Make consent explicit for collection categories and ensure the collector
-  sends only allowlisted metadata.
+- Add one universal consent-first skill and project installation paths for
+  documented agent environments; do not assume common automatic hooks.
+- Add task lifecycle CLI commands that use assigned task IDs and version-2
+  events, with local validation, secret redaction, bounded offline queueing,
+  backoff, pause, inspection, and revocation.
+- Add hashed, ten-minute, single-use pairing with persistent rate limits and
+  project/user/scope binding; create device credentials only after a valid
+  claim.
+- Keep optional legacy hooks opt-in and separate from structured task events.
 
-**Migration:** Keep version-1 ingestion and management-issued tokens during
-transition. Roll out producer updates by source, compare accepted/rejected and
-duplicate counts, and retain a rollback path.
+**Migration:** Additive migration `003_device_pairing.sql`; preserve existing
+device credentials and version-1 ingestion for compatible consumers. Pair new
+collectors through existing authorized project credentials and do not revoke
+bootstrap devices until replacement credentials are verified.
 
-**Exit gate:** Integration checks cover task-ID validation, consent/pause,
-offline retries, credential revoke, pairing replay/expiry if implemented, and
-privacy sentinels.
+**Evidence:** `docs/TRAC_UNIVERSAL_INTEGRATION.md`; pairing, collector, event,
+queue, pause/revoke, and end-to-end task-event verification.
+
+**Exit gate:** Pairing expiry/replay and scope boundaries, event-to-task
+linkage, privacy sentinels, offline behavior, credential revoke, and supported
+skill discovery are verified.
 
 ## Phase 5 — Storage and operational hardening
 

@@ -136,6 +136,18 @@ def _apply_migrations(conn):
                 VALUES (2, datetime('now'))
                 """
             )
+            applied.add(2)
+        if 3 not in applied:
+            migration_path = MIGRATIONS_DIR / "003_device_pairing.sql"
+            for statement in migration_path.read_text(encoding="utf-8").split(";"):
+                if statement.strip():
+                    conn.execute(statement)
+            conn.execute(
+                """
+                INSERT INTO schema_migrations (version, applied_at)
+                VALUES (3, datetime('now'))
+                """
+            )
         conn.commit()
     except Exception:
         conn.rollback()

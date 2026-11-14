@@ -44,7 +44,8 @@ class EmptyMetadata(StrictMetadata):
 
 
 class TaskProgressMetadata(StrictMetadata):
-    progress: int = Field(ge=0, le=100)
+    progress: int = Field(ge=0, le=100, strict=True)
+    note: Optional[str] = Field(default=None, max_length=160, strict=True)
 
 
 class TaskBlockedMetadata(StrictMetadata):
@@ -56,10 +57,12 @@ class TaskBlockedMetadata(StrictMetadata):
         "external",
         "other",
     ] = "other"
+    note: Optional[str] = Field(default=None, max_length=160, strict=True)
 
 
 class TaskCompletedMetadata(StrictMetadata):
     outcome: Literal["done", "partial", "abandoned"]
+    note: Optional[str] = Field(default=None, max_length=160, strict=True)
 
 
 class GitCommitMetadata(StrictMetadata):
@@ -178,6 +181,22 @@ class DevLoginRequest(BaseModel):
 
     github_username: str = Field(min_length=1, max_length=120)
     project_id: UUID
+
+
+class PairingCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: UUID
+    scopes: list[Literal["events:read", "events:ingest"]] = Field(
+        min_length=1, max_length=2
+    )
+
+
+class PairingClaim(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    code: str = Field(min_length=30, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    device_label: str = Field(min_length=1, max_length=100)
 
 
 class ProjectCreate(BaseModel):

@@ -7,7 +7,7 @@ name = "trac-activity-collector"
 version = "0.1.0"
 description = "Local CLI collector for TRAC activity events"
 requires-python = ">=3.9"
-dependencies = ["requests>=2.28"]
+dependencies = ["keyring>=24.2", "requests>=2.28"]
 
 [project.scripts]
 trac = "trac_collector.cli:main"

@@ -174,6 +174,7 @@ def run_e2e():
     trac = _trac_executable()
     passed_event_count = 0
     duplicate_count = 0
+    paired_task_demo = None
 
     with tempfile.TemporaryDirectory(prefix="trac-activity-e2e-") as temporary:
         root = Path(temporary)
@@ -233,7 +234,70 @@ def run_e2e():
             if not token or "\n" in token or "\r" in token:
                 raise AssertionError("trac.manage did not return exactly one device token")
 
-            _run_trac(trac, "login", "--url", base_url, "--token", token, cwd=repo, env=env)
+            status, identity = _request_json(
+                f"{base_url}/v1/me/device",
+                token=token,
+            )
+            if status != 200:
+                raise AssertionError("Could not verify the pairing issuer")
+            status, pairing = _request_json(
+                f"{base_url}/v1/pairings",
+                {
+                    "project_id": identity["project_id"],
+                    "scopes": ["events:read", "events:ingest"],
+                },
+                token,
+            )
+            if status != 201:
+                raise AssertionError("Could not create an authorized device pairing")
+            _run_trac(
+                trac,
+                "login",
+                "--url",
+                base_url,
+                "--pairing-code-stdin",
+                cwd=repo,
+                env=env,
+                input_text=pairing["pairing_code"] + "\n",
+            )
+            status, task = _request_json(
+                f"{base_url}/v1/projects/{identity['project_id']}/tasks",
+                {
+                    "title": "Verify real paired collector event",
+                    "assignee_id": identity["user_id"],
+                    "priority": "high",
+                },
+                token,
+            )
+            if status != 201:
+                raise AssertionError("Could not create the assigned E2E task")
+            _run_trac(trac, "tasks", cwd=repo, env=env)
+            _run_trac(
+                trac,
+                "task",
+                "start",
+                task["id"],
+                cwd=repo,
+                env=env,
+            )
+            task_connection = sqlite3.connect(database)
+            try:
+                linked_updates = task_connection.execute(
+                    "SELECT event_id FROM task_updates WHERE task_id = ? "
+                    "AND update_type = 'task.started'",
+                    (task["id"],),
+                ).fetchall()
+                current_task_status = task_connection.execute(
+                    "SELECT status FROM tasks WHERE id = ?",
+                    (task["id"],),
+                ).fetchone()
+            finally:
+                task_connection.close()
+            if not linked_updates or current_task_status != ("in_progress",):
+                raise AssertionError(
+                    "A real paired task.started event did not update its assigned task"
+                )
+            paired_task_demo = (task["id"], linked_updates[0][0])
             _run_git(git, "init", "--quiet", cwd=repo, env=env)
             _run_git(git, "config", "user.name", "TRAC E2E", cwd=repo, env=env)
             _run_git(
@@ -253,7 +317,7 @@ def run_e2e():
                 cwd=repo,
                 env=env,
             )
-            _run_trac(trac, "init", cwd=repo, env=env)
+            _run_trac(trac, "init", "--git-hooks", cwd=repo, env=env)
 
             file_content = f"temporary fixture: {FAKE_KEY}\n"
             secret_file = repo / "secret.txt"
@@ -457,12 +521,17 @@ def run_e2e():
                 ],
             )
 
+            _run_trac(trac, "disconnect", cwd=repo, env=env)
             passed_event_count = len(rows)
             duplicate_count = len(sent_events)
         finally:
             _stop_backend(process, log_file)
 
     print("PASS: isolated backend and device user initialized")
+    print(
+        "PASS: one-time pairing delivered task.started event "
+        f"{paired_task_demo[1]} to task {paired_task_demo[0]} (todo -> in_progress)"
+    )
     print("PASS: Git hooks captured commit and branch checkout metadata")
     print("PASS: task and Claude hook events were accepted")
     print("PASS: pause suppressed CLI and Claude hook collection")

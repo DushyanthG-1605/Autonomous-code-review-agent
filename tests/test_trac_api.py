@@ -1115,3 +1115,224 @@ def test_development_login_is_opt_in_and_never_works_in_production(
         "/v1/projects",
         headers={"Authorization": f"Bearer {development_token}"},
     ).status_code == 401
+
+
+def test_secure_pairing_is_scoped_single_use_and_stores_only_hash(api, device):
+    issuer_token, issuer_device_id = device
+    conn = db.get_connection()
+    issuer = conn.execute(
+        "SELECT user_id, project_id FROM devices WHERE id = ?", (issuer_device_id,)
+    ).fetchone()
+    conn.close()
+    headers = {"Authorization": f"Bearer {issuer_token}"}
+
+    pairing = api.post(
+        "/v1/pairings",
+        headers=headers,
+        json={
+            "project_id": issuer["project_id"],
+            "scopes": ["events:read", "events:ingest"],
+        },
+    )
+    assert pairing.status_code == 201
+    issued = pairing.json()
+    assert issued["expires_at"]
+    assert issued["scopes"] == ["events:ingest", "events:read"]
+
+    conn = db.get_connection()
+    stored_pair = conn.execute(
+        "SELECT * FROM device_pairings WHERE id = ?", (issued["pairing_id"],)
+    ).fetchone()
+    assert stored_pair["code_hash"] == hashlib.sha256(
+        issued["pairing_code"].encode()
+    ).hexdigest()
+    assert stored_pair["code_hash"] != issued["pairing_code"]
+    assert stored_pair["consumed_at"] is None
+
+    claim = api.post(
+        "/v1/pairings/claim",
+        json={"code": issued["pairing_code"], "device_label": "Universal CLI"},
+    )
+    assert claim.status_code == 200
+    credential = claim.json()
+    assert credential["project_id"] == issuer["project_id"]
+    assert credential["scopes"] == ["events:ingest", "events:read"]
+    assert api.get(
+        "/v1/me/device",
+        headers={"Authorization": f"Bearer {credential['access_token']}"},
+    ).json()["device_id"] == credential["device_id"]
+    assert api.post(
+        "/v1/pairings/claim",
+        json={"code": issued["pairing_code"], "device_label": "Replay"},
+    ).status_code == 400
+
+    saved_credential = conn.execute(
+        "SELECT token_hash FROM devices WHERE id = ?", (credential["device_id"],)
+    ).fetchone()
+    consumed = conn.execute(
+        "SELECT consumed_at FROM device_pairings WHERE id = ?", (issued["pairing_id"],)
+    ).fetchone()
+    conn.close()
+    assert saved_credential["token_hash"] == hashlib.sha256(
+        credential["access_token"].encode()
+    ).hexdigest()
+    assert saved_credential["token_hash"] != credential["access_token"]
+    assert consumed["consumed_at"] is not None
+
+
+def test_pairing_denies_unapproved_project_and_scopes(api, device, second_device):
+    issuer_token, issuer_device_id = device
+    conn = db.get_connection()
+    project_id = conn.execute(
+        "SELECT project_id FROM devices WHERE id = ?", (issuer_device_id,)
+    ).fetchone()["project_id"]
+    conn.close()
+    headers = {"Authorization": f"Bearer {issuer_token}"}
+
+    assert api.post(
+        "/v1/pairings",
+        headers=headers,
+        json={
+            "project_id": str(uuid.uuid4()),
+            "scopes": ["events:read"],
+        },
+    ).status_code == 404
+    assert api.post(
+        "/v1/pairings",
+        headers=headers,
+        json={
+            "project_id": project_id,
+            "scopes": ["events:read", "events:admin"],
+        },
+    ).status_code == 422
+
+    read_only = api.post(
+        "/v1/pairings",
+        headers=headers,
+        json={"project_id": project_id, "scopes": ["events:read"]},
+    ).json()
+    read_credential = api.post(
+        "/v1/pairings/claim",
+        json={
+            "code": read_only["pairing_code"],
+            "device_label": "Read-only integration",
+        },
+    ).json()
+    read_headers = {"Authorization": f"Bearer {read_credential['access_token']}"}
+    assert api.get("/v1/me/tasks", headers=read_headers).status_code == 200
+    assert api.post(
+        "/v1/events",
+        headers=read_headers,
+        json=canonical_event(),
+    ).status_code == 403
+    assert api.post(
+        "/v1/pairings",
+        headers={"Authorization": f"Bearer {second_device}"},
+        json={"project_id": project_id, "scopes": ["events:read"]},
+    ).status_code == 404
+
+
+def test_expired_pairing_codes_cannot_be_claimed(api, device):
+    token, device_id = device
+    conn = db.get_connection()
+    project_id = conn.execute(
+        "SELECT project_id FROM devices WHERE id = ?", (device_id,)
+    ).fetchone()["project_id"]
+    conn.close()
+    pairing = api.post(
+        "/v1/pairings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"project_id": project_id, "scopes": ["events:read"]},
+    ).json()
+    conn = db.get_connection()
+    conn.execute(
+        "UPDATE device_pairings SET expires_at = '2000-01-01T00:00:00Z' WHERE id = ?",
+        (pairing["pairing_id"],),
+    )
+    conn.commit()
+    conn.close()
+
+    response = api.post(
+        "/v1/pairings/claim",
+        json={"code": pairing["pairing_code"], "device_label": "Expired"},
+    )
+    assert response.status_code == 400
+    conn = db.get_connection()
+    assert conn.execute(
+        "SELECT COUNT(*) FROM devices WHERE label = 'Expired'"
+    ).fetchone()[0] == 0
+    conn.close()
+
+
+def test_pairing_code_revoked_when_issuer_device_is_revoked(api, device):
+    token, device_id = device
+    conn = db.get_connection()
+    project_id = conn.execute(
+        "SELECT project_id FROM devices WHERE id = ?", (device_id,)
+    ).fetchone()["project_id"]
+    conn.close()
+    pairing = api.post(
+        "/v1/pairings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"project_id": project_id, "scopes": ["events:read"]},
+    ).json()
+    conn = db.get_connection()
+    conn.execute(
+        "UPDATE devices SET revoked_at = ? WHERE id = ?", (now_iso(), device_id)
+    )
+    conn.commit()
+    conn.close()
+
+    response = api.post(
+        "/v1/pairings/claim",
+        json={"code": pairing["pairing_code"], "device_label": "Revoked issuer"},
+    )
+    assert response.status_code == 400
+
+
+def test_current_device_revocation_invalidates_credential(api, device):
+    token, device_id = device
+    headers = {"Authorization": f"Bearer {token}"}
+    assert api.delete("/v1/me/device", headers=headers).status_code == 204
+    assert api.get("/v1/me/device", headers=headers).status_code == 401
+    conn = db.get_connection()
+    assert conn.execute(
+        "SELECT revoked_at FROM devices WHERE id = ?", (device_id,)
+    ).fetchone()["revoked_at"]
+    conn.close()
+
+
+def test_pairing_creation_and_claim_are_rate_limited(api, device):
+    token, device_id = device
+    conn = db.get_connection()
+    project_id = conn.execute(
+        "SELECT project_id FROM devices WHERE id = ?", (device_id,)
+    ).fetchone()["project_id"]
+    conn.close()
+    headers = {"Authorization": f"Bearer {token}"}
+    for _ in range(5):
+        response = api.post(
+            "/v1/pairings",
+            headers=headers,
+            json={"project_id": project_id, "scopes": ["events:read"]},
+        )
+        assert response.status_code == 201
+    limited_create = api.post(
+        "/v1/pairings",
+        headers=headers,
+        json={"project_id": project_id, "scopes": ["events:read"]},
+    )
+    assert limited_create.status_code == 429
+    assert int(limited_create.headers["Retry-After"]) > 0
+
+    for _ in range(10):
+        response = api.post(
+            "/v1/pairings/claim",
+            json={"code": "invalid-pairing-code-000000000000", "device_label": "Rate"},
+        )
+        assert response.status_code == 400
+    limited_claim = api.post(
+        "/v1/pairings/claim",
+        json={"code": "invalid-pairing-code-000000000000", "device_label": "Rate"},
+    )
+    assert limited_claim.status_code == 429

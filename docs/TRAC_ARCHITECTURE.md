@@ -2,10 +2,10 @@
 
 **Audit snapshot:** 2026-11-13  
 **Scope:** Current checkout, including the uncommitted TRAC collector/dashboard changes present during the audit.  
-**Status:** Architecture and baseline audit only; no new product integration has been implemented.
+**Status:** Phase 1 audit snapshot with the current Phase 2–4 implementation recorded below.
 
 > **Scope note:** Sections through “Remaining risks and blockers” preserve the
-> Phase 1 audit snapshot and findings as they stood then. The current Phase 2–3
+> Phase 1 audit snapshot and findings as they stood then. The current Phase 2–4
 > architecture and superseding behavior are recorded in the update below.
 
 ## Executive summary
@@ -103,7 +103,7 @@ This is GitHub PR-review integration, not a GitHub App/webhook integration for g
 - [collector/trac_collector/cli.py](../collector/trac_collector/cli.py) is installed as the `trac` executable through [collector/pyproject.toml](../collector/pyproject.toml). Commands include `login`, `emit`, `flush`, `status`, `pause`, `resume`, `data`, `logout`, `init`, `uninit`, and `hook claude`.
 - The collector keeps a local queue, retries batches, supports offline queuing, redacts selected secret-like values, and sends authenticated batches to `/v1/events`.
 - Git hooks capture commit statistics, push metadata, and branch changes. Optional Claude Code hooks map session/prompt-submission/file-edit/command outcomes to bounded metadata; hook payload contents are not serialized into the event.
-- [skill/trac-activity/SKILL.md](../skill/trac-activity/SKILL.md) documents task start/completion/blocked emissions.
+- The current consent-first lifecycle is documented in [skill/trac/SKILL.md](../skill/trac/SKILL.md).
 - No MCP server implementation or MCP configuration was found in the repository.
 
 ## Dashboard implementation, live behavior, and mock values
@@ -155,12 +155,13 @@ The end-to-end script starts the backend and verifies the collector/API path. It
 6. **Medium — schema migration and event identity:** schema changes are ad hoc, and event-ID uniqueness is global rather than scoped to an owner/project.
 7. **Medium — integration gaps:** pairing is not implemented, CI/GitHub activity hooks are absent, and the current event type schema does not match the desired progress/test lifecycle.
 
-## Current architecture after Phases 2–3
+## Current architecture after Phases 2–4
 
 The Phase 1 findings above are historical. The current runtime still uses
 FastAPI, SQLite, the static dashboard, and the existing collector, but project
 scoping, canonical event ingestion, task management, and real SSE delivery have
-since been added.
+since been added. Phase 4 adds one-time device pairing, the universal
+consent-based skill, and a collector that reports structured task events.
 
 ### Current API surface
 
@@ -175,10 +176,12 @@ since been added.
 | `GET/PATCH /v1/tasks/{id}`, `GET /v1/me/tasks` | Authorized task detail/history, updates, and assigned-work listing. |
 | `GET /v1/projects/{id}/activity`, `GET /v1/projects/{id}/overview` | Project-head-only activity and task-count overview. |
 | `POST /v1/dev/login` | Optional username-only development login; disabled unless explicitly enabled for development and rejected in production. |
+| `POST /v1/pairings`, `POST /v1/pairings/claim` | Authenticated, scoped code issuance and rate-limited one-time device pairing. |
+| `GET/DELETE /v1/me/device` | Inspect current device identity/scopes or revoke the device. |
 
 ### Current data and event flow
 
-`schema_migrations` tracks two additive SQLite migrations:
+`schema_migrations` tracks three additive SQLite migrations:
 
 1. `001_project_scoped_events.sql` adds public user IDs, projects,
    memberships, device project/scopes, activity project/task references, and
@@ -187,6 +190,9 @@ since been added.
 2. `002_projects_tasks_identity.sql` adds optional email/GitHub username and
    user role, project key/description/head, device auth mode, `tasks`, and
    `task_updates`, with foreign keys and indexes.
+3. `003_device_pairing.sql` adds hashed one-time pairing records and persistent
+   rate-limit buckets; it preserves existing users, projects, devices, and
+   activity.
 
 The main persisted tables are `users`, `projects`, `project_memberships`,
 `devices`, `tasks`, `task_updates`, `activity_events`,
@@ -221,8 +227,30 @@ shared transactional storage or an external broker.
 - Version-1 collector events remain compatible but have no structured task
   UUID, so legacy task events cannot be linked to `tasks`; new task lifecycle
   producers must use version 2 with a real task ID.
-- GitHub App/webhook and CI activity integrations, secure pairing, and
-  multi-host event delivery remain unimplemented.
+- Pairing requires an existing project-scoped device credential with
+  `events:ingest`; production OAuth/SSO and self-service enrollment are not
+  implemented.
+- GitHub App/webhook and CI activity integrations and multi-host event delivery
+  remain unimplemented.
 - Project dashboard projections are still limited; task APIs are available,
   but the dashboard has not been redesigned into a complete task-management
   interface.
+
+### Universal skill and collector
+
+- [`skill/trac/SKILL.md`](../skill/trac/SKILL.md) requires explicit consent,
+  checks assigned tasks, reports meaningful lifecycle milestones, and forbids
+  source/prompt/secret collection.
+- [`collector/trac_collector/cli.py`](../collector/trac_collector/cli.py)
+  provides pairing login, task lifecycle commands, a bounded offline queue,
+  redaction, pause, inspection, and server-side device revocation.
+- The collector stores device credentials in the OS keyring when available;
+  POSIX restricted-file fallback is used only when the keyring package is
+  unavailable. A configured keyring failure is surfaced.
+- Host skill locations and documented compatibility are in
+  [`TRAC_UNIVERSAL_INTEGRATION.md`](TRAC_UNIVERSAL_INTEGRATION.md). They share
+  one CLI and backend; automatic hooks are not assumed and Git hooks require
+  an explicit opt-in.
+- Offline queues are local to the user profile. The collector retries on later
+  flush attempts with backoff; there is no background daemon or multi-machine
+  queue synchronization.
