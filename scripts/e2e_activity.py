@@ -14,8 +14,12 @@ from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from tests.fake_secrets import stripe_live_key
+
 HOST = "127.0.0.1"
-FAKE_KEY = "sk-live-FAKEKEY1234567890"
+FAKE_KEY = stripe_live_key()
 
 
 def _trac_executable():

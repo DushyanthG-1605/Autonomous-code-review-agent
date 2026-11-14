@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from trac import db
 from trac.main import app
 from trac.models import now_iso
+from tests.fake_secrets import github_token, stripe_live_key
 
 @pytest.fixture
 def personal_api(tmp_path, monkeypatch):
@@ -32,7 +33,7 @@ def test_revoked_key_401(personal_api):
 
 def test_owner_hint_dedupe_and_redaction(personal_api):
     client, key, user_id = personal_api; h = {"Authorization": f"Bearer {key}"}
-    body = event(externalId="same", engineer="body-person", summary="sk-live-FAKEKEY1234567890 ghp_abcdefghijklmnopqrstuvwxyz012345678901234567", reason="reason sk-live-FAKEKEY1234567890")
+    body = event(externalId="same", engineer="body-person", summary=f"{stripe_live_key()} {github_token()}", reason=f"reason {stripe_live_key()}")
     assert client.post("/v1/events", json=body, headers=h).json()["inserted"] == 1
     assert client.post("/v1/events", json=body, headers=h).json()["deduplicated"] == 1
     row = db.get_connection().execute("SELECT * FROM events WHERE external_id='same'").fetchone()

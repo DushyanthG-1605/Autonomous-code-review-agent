@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from trac import db
 from trac.main import _rate_limit_hits, _rate_limit_lock, app, stream_activity_events
 from trac.models import now_iso
+from tests.fake_secrets import stripe_live_key
 
 
 @pytest.fixture(autouse=True)
@@ -486,7 +487,7 @@ def test_legacy_endpoint_rejects_sensitive_metadata(api, device):
             "type": "agent.review_completed",
             "source": "code-review-agent",
             "summary": "Review finished",
-            "metadata": {"api_key": "sk-live-FAKEKEY1234567890"},
+            "metadata": {"api_key": stripe_live_key()},
         },
     )
 
