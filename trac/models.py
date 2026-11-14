@@ -25,6 +25,7 @@ EventType = Literal[
     "task.completed",
     "git.commit",
     "git.pull_request.opened",
+    "git.pull_request.updated",
     "git.pull_request.merged",
     "test.completed",
     "build.completed",
@@ -70,6 +71,16 @@ class GitCommitMetadata(StrictMetadata):
     files_changed: Optional[int] = Field(default=None, ge=0)
     insertions: Optional[int] = Field(default=None, ge=0)
     deletions: Optional[int] = Field(default=None, ge=0)
+    repository: Optional[str] = Field(
+        default=None, pattern=r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$"
+    )
+    branch: Optional[str] = Field(
+        default=None, max_length=120, pattern=r"^[A-Za-z0-9._/-]+$"
+    )
+    task_reference: Optional[str] = Field(
+        default=None,
+        pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,63}-[1-9][0-9]{0,11}$",
+    )
 
 
 class PullRequestMetadata(StrictMetadata):
@@ -80,6 +91,17 @@ class PullRequestMetadata(StrictMetadata):
     head_branch: str = Field(
         min_length=1, max_length=120, pattern=r"^[A-Za-z0-9._/-]+$"
     )
+    repository: Optional[str] = Field(
+        default=None, pattern=r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$"
+    )
+    task_reference: Optional[str] = Field(
+        default=None,
+        pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,63}-[1-9][0-9]{0,11}$",
+    )
+
+
+class PullRequestUpdatedMetadata(PullRequestMetadata):
+    pass
 
 
 class TestCompletedMetadata(StrictMetadata):
@@ -102,6 +124,25 @@ class TestCompletedMetadata(StrictMetadata):
 class BuildCompletedMetadata(StrictMetadata):
     result: Literal["passed", "failed", "cancelled"]
     duration_ms: Optional[int] = Field(default=None, ge=0)
+    repository: Optional[str] = Field(
+        default=None, pattern=r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$"
+    )
+    branch: Optional[str] = Field(
+        default=None, max_length=120, pattern=r"^[A-Za-z0-9._/-]+$"
+    )
+    workflow_name: Optional[str] = Field(
+        default=None, max_length=120, pattern=r"^[A-Za-z0-9_. /-]+$"
+    )
+    workflow_id: Optional[int] = Field(default=None, gt=0)
+    run_id: Optional[int] = Field(default=None, gt=0)
+    check_name: Optional[str] = Field(
+        default=None, max_length=120, pattern=r"^[A-Za-z0-9_. /-]+$"
+    )
+    check_run_id: Optional[int] = Field(default=None, gt=0)
+    task_reference: Optional[str] = Field(
+        default=None,
+        pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,63}-[1-9][0-9]{0,11}$",
+    )
 
 
 EVENT_METADATA_MODELS = {
@@ -111,6 +152,7 @@ EVENT_METADATA_MODELS = {
     "task.completed": TaskCompletedMetadata,
     "git.commit": GitCommitMetadata,
     "git.pull_request.opened": PullRequestMetadata,
+    "git.pull_request.updated": PullRequestUpdatedMetadata,
     "git.pull_request.merged": PullRequestMetadata,
     "test.completed": TestCompletedMetadata,
     "build.completed": BuildCompletedMetadata,
@@ -216,6 +258,12 @@ class TaskCreate(BaseModel):
 
     title: str = Field(min_length=1, max_length=200)
     description: Optional[str] = Field(default=None, max_length=5000)
+    external_key: Optional[str] = Field(
+        default=None,
+        min_length=3,
+        max_length=80,
+        pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,63}-[1-9][0-9]{0,11}$",
+    )
     assignee_id: Optional[UUID] = None
     priority: Literal["low", "medium", "high", "urgent"] = "medium"
     due_date: Optional[date] = None
@@ -226,6 +274,12 @@ class TaskPatch(BaseModel):
 
     title: Optional[str] = Field(default=None, min_length=1, max_length=200)
     description: Optional[str] = Field(default=None, max_length=5000)
+    external_key: Optional[str] = Field(
+        default=None,
+        min_length=3,
+        max_length=80,
+        pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,63}-[1-9][0-9]{0,11}$",
+    )
     assignee_id: Optional[UUID] = None
     status: Optional[
         Literal["todo", "in_progress", "blocked", "in_review", "done"]

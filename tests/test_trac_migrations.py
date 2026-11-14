@@ -130,11 +130,18 @@ def test_additive_migration_preserves_and_scopes_existing_rows(tmp_path, monkeyp
     assert project["project_key"] == "personal-1"
     assert project["project_head_id"] == 1
     assert task_table is not None
-    assert migration_count == 3
+    assert migration_count == 4
 
     db.init_db()
     conn = db.get_connection()
     assert conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 3
     assert conn.execute("SELECT COUNT(*) FROM activity_event_stream").fetchone()[0] == 1
-    assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 3
+    assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 4
+    assert conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' "
+        "AND name = 'github_repository_mappings'"
+    ).fetchone()
+    assert "external_key" in {
+        row["name"] for row in conn.execute("PRAGMA table_info(tasks)")
+    }
     conn.close()

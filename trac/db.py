@@ -148,6 +148,17 @@ def _apply_migrations(conn):
                 VALUES (3, datetime('now'))
                 """
             )
+        if 4 not in applied:
+            migration_path = MIGRATIONS_DIR / "004_github_ci_integration.sql"
+            for statement in migration_path.read_text(encoding="utf-8").split(";"):
+                if statement.strip():
+                    conn.execute(statement)
+            conn.execute(
+                """
+                INSERT INTO schema_migrations (version, applied_at)
+                VALUES (4, datetime('now'))
+                """
+            )
         conn.commit()
     except Exception:
         conn.rollback()
